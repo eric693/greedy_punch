@@ -224,7 +224,19 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   <!-- ── 儀表板 ── -->
   <div class="page" id="page-dash" style="display:none">
 
-    <!-- 頂部統計卡片 -->
+    <!-- 月份選擇器 -->
+    <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
+      <span class="filter-label">查詢月份</span>
+      <input type="month" class="filter-input" id="dash-month-picker"
+             style="min-width:150px" onchange="initDash()">
+      <button class="btn btn-outline btn-sm" onclick="initDash()">重新整理</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetDashMonth()">回到本月</button>
+      <span id="ds-month-badge"
+            style="font-size:12px;font-weight:700;color:var(--accent);display:none">
+        ＊非當月資料
+      </span>
+    </div>
+
     <div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px" id="dash-stat-cards">
       <div class="stat-card" style="border-left:4px solid var(--green)">
         <div class="stat-label">今日出勤</div>
@@ -237,7 +249,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div class="stat-sub" id="ds-pending-sub">筆需要處理</div>
       </div>
       <div class="stat-card" style="border-left:4px solid var(--accent)">
-        <div class="stat-label">本月薪資總額</div>
+        <div class="stat-label" id="ds-salary-label">本月薪資總額</div>
         <div class="stat-value" id="ds-salary">—</div>
         <div class="stat-sub" id="ds-salary-sub">已確認 / 全部</div>
       </div>
@@ -265,7 +277,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <!-- 今日出勤狀態圓餅圖 -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">今日出勤狀態</span>
+          <span class="card-title" id="ds-today-pie-title">今日出勤狀態</span>
           <span id="ds-today-label" style="font-size:12px;color:var(--muted)"></span>
         </div>
         <div style="padding:16px 20px;display:flex;align-items:center;gap:24px">
@@ -329,7 +341,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <!-- 今日出勤明細表 -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">今日人員狀態</span>
+          <span class="card-title" id="ds-today-table-title">今日人員狀態</span>
           <button class="btn btn-outline btn-sm" onclick="initDash()">重新整理</button>
         </div>
         <div class="table-wrap" style="max-height:320px;overflow-y:auto">
@@ -1643,47 +1655,88 @@ function _destroyChart(id) {
 }
 
 async function initDash() {
-  const { ok, data } = await api('/api/dashboard', {}, true);
+  // 設定預設月份為本月
+  const picker = document.getElementById('dash-month-picker');
+  if (!picker.value) {
+    const now = new Date();
+    picker.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  const month   = picker.value;
+  const thisMonth = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const isCurrentMonth = month === thisMonth;
+
+  // 顯示「非當月」提示
+  const badge = document.getElementById('ds-month-badge');
+  if (badge) badge.style.display = isCurrentMonth ? 'none' : '';
+
+  const { ok, data } = await api(`/api/dashboard?month=${month}`, {}, true);
   if (!ok) return;
-  renderDashStats(data);
-  renderDashTodayDetail(data.today_detail || []);
+  renderDashStats(data, isCurrentMonth);
+  renderDashTodayDetail(data.today_detail || [], isCurrentMonth);
   renderDashPending(data.pending);
   await renderDashDailyChart(data.daily_attendance || [], data.month);
   loadAnomalies();
-  renderDashTodayPie(data.today_summary);
+  renderDashTodayPie(data.today_summary, isCurrentMonth);
   renderDashLeavePie(data.leave_distribution || []);
   renderDashOTBar(data.ot_ranking || []);
 }
 
+function resetDashMonth() {
+  const now = new Date();
+  document.getElementById('dash-month-picker').value =
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  initDash();
+}
+
 // ── 統計卡片 ─────────────────────────────────────────────────
-function renderDashStats(data) {
+function renderDashStats(data, isCurrentMonth) {
   const ts  = data.today_summary;
   const sal = data.salary_summary;
-  const now = new Date();
-  document.getElementById('ds-month-label').textContent  = data.month;
-  document.getElementById('ds-today-label').textContent  = data.today;
+  document.getElementById('ds-month-label').textContent = data.month;
+  document.getElementById('ds-today-label').textContent = data.today;
 
-  document.getElementById('ds-working').textContent     = ts.working;
-  document.getElementById('ds-working-sub').textContent = `上班中 | 已下班 ${ts.clocked_out} | 請假 ${ts.on_leave}`;
+  // 第一張卡：當月顯示今日出勤；歷史月份顯示月度出勤人次
+  const statCards = document.querySelectorAll('#dash-stat-cards .stat-card');
+  const card1Label = statCards[0] && statCards[0].querySelector('.stat-label');
+  if (isCurrentMonth) {
+    if (card1Label) card1Label.textContent = '今日出勤';
+    document.getElementById('ds-working').textContent     = ts.working;
+    document.getElementById('ds-working-sub').textContent = `上班中 | 已下班 ${ts.clocked_out} | 請假 ${ts.on_leave}`;
+    document.getElementById('ds-total').textContent       = ts.total;
+    document.getElementById('ds-total-sub').textContent   = `未出勤 ${ts.absent} 人`;
+  } else {
+    if (card1Label) card1Label.textContent = '月出勤人次';
+    const totalPunches = (data.daily_attendance || []).reduce((s, d) => s + d.count, 0);
+    const punchDays    = (data.daily_attendance || []).filter(d => d.count > 0).length;
+    document.getElementById('ds-working').textContent     = totalPunches;
+    document.getElementById('ds-working-sub').textContent = `${punchDays} 個出勤日`;
+    document.getElementById('ds-total').textContent       = ts.total;
+    document.getElementById('ds-total-sub').textContent   = `在職人員`;
+  }
+
   document.getElementById('ds-pending').textContent     = data.pending.total;
   document.getElementById('ds-pending-sub').textContent = `補打${data.pending.punch} 加班${data.pending.ot} 排休${data.pending.sched} 請假${data.pending.leave}`;
 
+  const salLabel = document.getElementById('ds-salary-label');
+  if (salLabel) salLabel.textContent = isCurrentMonth ? '本月薪資總額' : `${data.month} 薪資總額`;
   const netFmt = sal.total_net > 0 ? '$' + sal.total_net.toLocaleString('zh-TW', {maximumFractionDigits:0}) : '—';
   document.getElementById('ds-salary').textContent     = netFmt;
   document.getElementById('ds-salary-sub').textContent = `已確認 ${sal.confirmed_count} / 共 ${sal.total_count} 筆`;
-  document.getElementById('ds-total').textContent      = ts.total;
-  document.getElementById('ds-total-sub').textContent  = `未出勤 ${ts.absent} 人`;
 }
 
 // ── 今日出勤明細表 ────────────────────────────────────────────
-function renderDashTodayDetail(detail) {
+function renderDashTodayDetail(detail, isCurrentMonth) {
   const STATUS_COLOR = {
     working: 'var(--green)', done: 'var(--muted)',
     leave: 'var(--accent)', absent: 'var(--red)'
   };
+  // 更新卡片標題
+  const titleEl = document.querySelector('[id="ds-today-table"]')?.closest('.card')?.querySelector('.card-title');
+  if (titleEl) titleEl.textContent = isCurrentMonth ? '今日人員狀態' : '該月人員出勤摘要';
+
   const tb = document.getElementById('ds-today-table');
   if (!detail.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty-state"><div class="empty-state-text">今日無出勤資料</div></td></tr>';
+    tb.innerHTML = `<tr><td colspan="5" class="empty-state"><div class="empty-state-text">${isCurrentMonth ? '今日無出勤資料' : '該月無出勤資料'}</div></td></tr>`;
     return;
   }
   tb.innerHTML = detail.map(r => `<tr>
@@ -1775,7 +1828,9 @@ async function renderDashDailyChart(daily, month) {
 }
 
 // ── 今日出勤圓餅圖 ────────────────────────────────────────────
-function renderDashTodayPie(ts) {
+function renderDashTodayPie(ts, isCurrentMonth) {
+  const pieTitle = document.getElementById('ds-today-pie-title');
+  if (pieTitle) pieTitle.textContent = isCurrentMonth ? '今日出勤狀態' : '月度出勤狀態';
   _destroyChart('today-pie');
   const ctx = document.getElementById('chart-today-pie');
   if (!ctx || !ts) return;

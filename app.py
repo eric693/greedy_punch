@@ -4068,7 +4068,21 @@ def api_dashboard():
     from datetime import date as _dd, datetime as _ddt, timezone as _tz, timedelta as _tdd
     TW    = _tz(_tdd(hours=8))
     today = _ddt.now(TW).date()
-    month = today.strftime('%Y-%m')
+
+    # 支援傳入月份參數；預設為當月
+    req_month = request.args.get('month', '').strip()
+    if req_month and len(req_month) == 7:
+        month = req_month
+        try:
+            y, m = int(month[:4]), int(month[5:])
+            import calendar as _cal_d
+            last_day = _cal_d.monthrange(y, m)[1]
+            from datetime import date as _dcheck
+            # 如果查詢的是未來月份，today 仍用實際今天
+        except Exception:
+            month = today.strftime('%Y-%m')
+    else:
+        month = today.strftime('%Y-%m')
 
     with get_db() as conn:
 
@@ -4228,9 +4242,12 @@ def api_dashboard():
             for r in ot_rank_rows
         ]
 
+    from datetime import date as _ddc
+    cur_month = _ddc.today().strftime('%Y-%m')
     return jsonify({
-        'month':  month,
-        'today':  str(today),
+        'month':            month,
+        'today':            str(today),
+        'is_current_month': month == cur_month,
         # 今日出勤
         'today_summary': {
             'total':       total_staff,
