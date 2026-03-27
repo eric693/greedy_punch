@@ -757,39 +757,6 @@ function switchPunchTab(tab) {
   if (tab === 'line')      loadLinePunchConfig();
 }
 
-// ══════════════════════════════════════════════════════════════
-// 打卡管理模組
-// ══════════════════════════════════════════════════════════════
-let punchStaffList = [];
-let punchRecords   = [];
-let punchEditRecId = null;
-let punchEditStaffId = null;
-
-const PUNCH_LABEL = { in:'上班打卡', out:'下班打卡', break_out:'休息開始', break_in:'休息結束' };
-const PUNCH_COLOR = { in:'var(--green)', out:'var(--red)', break_out:'#e07b2a', break_in:'var(--accent)' };
-
-function initPunch() {
-  const now = new Date();
-  const ym  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  document.getElementById('sum-month').value = ym;
-  switchPunchTab('summary');
-}
-
-function switchPunchTab(tab) {
-  ['summary','records','manual','requests','overtime','staff','gps','line'].forEach(t => {
-    document.getElementById('punchtab-' + t).classList.toggle('active', t === tab);
-    document.getElementById('punch-panel-' + t).style.display = t === tab ? '' : 'none';
-  });
-  if (tab === 'summary')   loadPunchSummary();
-  if (tab === 'records')   { loadPunchStaffOptions(); loadPunchRecords(); }
-  if (tab === 'manual')    { loadManualStaffOptions(); loadManualRecords(); }
-  if (tab === 'staff')     loadPunchStaff();
-  if (tab === 'requests')  loadPunchRequests();
-  if (tab === 'overtime')  loadOTRequests();
-  if (tab === 'gps')       loadGpsSettings();
-  if (tab === 'line')      loadLinePunchConfig();
-}
-
 // ── 出勤摘要 ──────────────────────────────────────────────────
 async function loadPunchSummary() {
   const month = document.getElementById('sum-month').value;
