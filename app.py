@@ -48,6 +48,9 @@ WEEKDAY_ZH = ['一', '二', '三', '四', '五', '六', '日']
 def get_db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
+def _hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+
 
 def init_db():
     if not DATABASE_URL:
@@ -512,9 +515,6 @@ def api_admin_account_delete(aid):
     return jsonify({'deleted': aid})
 
 # ─── Shared Helpers ───────────────────────────────────────────────────────────
-
-def _hash_pw(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
 
 def _gps_distance(lat1, lng1, lat2, lng2):
     R = 6371000
