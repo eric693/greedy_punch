@@ -203,6 +203,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-salary" onclick="showPage('salary',event)">薪資管理</a>
     <a href="#" class="nav-item"        id="nav-ann"    onclick="showPage('ann',event)">公告管理</a>
     <a href="#" class="nav-item"        id="nav-holiday" onclick="showPage('holiday',event)">國定假日</a>
+    <a href="#" class="nav-item"        id="nav-finance" onclick="showPage('finance',event)">財務管理</a>
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
@@ -940,6 +941,139 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
   </div><!-- end page-holiday -->
 
+  <!-- ── 財務管理 ── -->
+  <div class="page" id="page-finance" style="display:none">
+    <div class="inv-tab-bar">
+      <button class="inv-tab active" id="fintab-dash"    onclick="switchFinTab('dash')">損益儀表板</button>
+      <button class="inv-tab"        id="fintab-records" onclick="switchFinTab('records')">收支記錄</button>
+      <button class="inv-tab"        id="fintab-cats"    onclick="switchFinTab('cats')">類別設定</button>
+      <button class="inv-tab"        id="fintab-ocr"     onclick="switchFinTab('ocr')">OCR辨識</button>
+    </div>
+
+    <!-- 損益儀表板 -->
+    <div id="fin-panel-dash">
+      <div class="filter-bar" style="margin-bottom:16px;gap:12px;flex-wrap:wrap">
+        <span class="filter-label">月份</span>
+        <input class="filter-input" type="month" id="fin-dash-month" onchange="loadFinSummary()">
+        <span style="flex:1"></span>
+        <button class="btn btn-outline btn-sm" onclick="exportFinance()">匯出 CSV</button>
+      </div>
+      <!-- 三欄 KPI -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px">
+        <div class="card" style="padding:20px;text-align:center">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">本月收入</div>
+          <div id="fin-kpi-income" style="font-size:26px;font-weight:700;color:var(--green);font-family:'DM Mono',monospace">—</div>
+        </div>
+        <div class="card" style="padding:20px;text-align:center">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">本月支出</div>
+          <div id="fin-kpi-expense" style="font-size:26px;font-weight:700;color:var(--red);font-family:'DM Mono',monospace">—</div>
+        </div>
+        <div class="card" style="padding:20px;text-align:center">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">淨損益</div>
+          <div id="fin-kpi-net" style="font-size:26px;font-weight:700;font-family:'DM Mono',monospace">—</div>
+        </div>
+      </div>
+      <!-- 圖表 -->
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:20px">
+        <div class="card" style="padding:16px">
+          <div class="card-title" style="padding:0;margin-bottom:12px;font-size:13px">近6個月趨勢</div>
+          <canvas id="fin-trend-chart" height="120"></canvas>
+        </div>
+        <div class="card" style="padding:16px">
+          <div class="card-title" style="padding:0;margin-bottom:12px;font-size:13px">支出分類佔比</div>
+          <canvas id="fin-cat-chart" height="160"></canvas>
+        </div>
+      </div>
+      <!-- 類別明細 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">收入明細</span></div>
+          <div id="fin-income-cats" style="padding:12px 16px"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">支出明細</span></div>
+          <div id="fin-expense-cats" style="padding:12px 16px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 收支記錄 -->
+    <div id="fin-panel-records" style="display:none">
+      <div class="filter-bar" style="margin-bottom:16px;gap:12px;flex-wrap:wrap">
+        <span class="filter-label">月份</span>
+        <input class="filter-input" type="month" id="fin-rec-month" onchange="loadFinRecords()">
+        <select class="filter-input" id="fin-rec-type" onchange="loadFinRecords()" style="min-width:100px">
+          <option value="">全部</option><option value="income">收入</option><option value="expense">支出</option>
+        </select>
+        <span style="flex:1"></span>
+        <button class="btn btn-primary btn-sm" onclick="openFinRecModal()">新增記錄</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>日期</th><th>類型</th><th>類別</th><th>標題</th><th>廠商</th><th>發票/單據</th><th style="text-align:right">金額</th><th>備註</th><th>操作</th></tr></thead>
+            <tbody id="fin-rec-tbody"><tr><td colspan="9" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr></tbody>
+          </table>
+        </div>
+        <div id="fin-rec-footer" style="padding:12px 16px;font-size:12px;color:var(--muted);border-top:1px solid var(--border);display:none"></div>
+      </div>
+    </div>
+
+    <!-- 類別設定 -->
+    <div id="fin-panel-cats" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:12px;color:var(--muted)">管理收支類別</span>
+        <button class="btn btn-primary" onclick="openFinCatModal()">新增類別</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div class="card">
+          <div class="card-header"><span class="card-title" style="color:var(--green)">收入類別</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>名稱</th><th>顏色</th><th>排序</th><th>狀態</th><th>操作</th></tr></thead>
+            <tbody id="fin-cat-income-tbody"></tbody>
+          </table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title" style="color:var(--red)">支出類別</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>名稱</th><th>顏色</th><th>排序</th><th>狀態</th><th>操作</th></tr></thead>
+            <tbody id="fin-cat-expense-tbody"></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OCR辨識 -->
+    <div id="fin-panel-ocr" style="display:none">
+      <div style="max-width:700px">
+        <div class="card" style="padding:20px;margin-bottom:16px">
+          <div class="card-title" style="padding:0;margin-bottom:12px">上傳發票 / 收據 / 報帳單</div>
+          <div id="fin-ocr-drop" style="border:2px dashed var(--border);border-radius:8px;padding:36px;text-align:center;cursor:pointer;transition:border-color .2s"
+               onclick="document.getElementById('fin-ocr-file').click()"
+               ondragover="event.preventDefault();this.style.borderColor='var(--green)'"
+               ondragleave="this.style.borderColor='var(--border)'"
+               ondrop="handleOcrDrop(event)">
+            <div style="font-size:28px;margin-bottom:8px">🧾</div>
+            <div style="font-size:13px;color:var(--muted)">點擊上傳圖片（JPG、PNG、WEBP），或拖曳至此</div>
+            <div id="fin-ocr-filename" style="font-size:12px;color:var(--green);margin-top:6px"></div>
+            <input type="file" id="fin-ocr-file" accept="image/*" style="display:none" onchange="handleOcrFile(this.files[0])">
+          </div>
+          <button class="btn btn-primary" style="width:100%;margin-top:14px" id="fin-ocr-btn" onclick="doOcr()" disabled>AI OCR 辨識</button>
+          <div id="fin-ocr-loading" style="display:none;text-align:center;margin-top:12px;font-size:13px;color:var(--muted)">辨識中，請稍候...</div>
+        </div>
+        <!-- OCR 結果 -->
+        <div class="card" id="fin-ocr-result-card" style="padding:20px;display:none">
+          <div class="card-title" style="padding:0;margin-bottom:14px">辨識結果 <span style="font-size:12px;font-weight:400;color:var(--muted)">（請確認後按「建立記錄」）</span></div>
+          <div class="form-grid" id="fin-ocr-fields"></div>
+          <div style="margin-top:16px;display:flex;gap:10px">
+            <button class="btn btn-primary" onclick="createRecordFromOcr()">建立財務記錄</button>
+            <button class="btn btn-outline" onclick="resetOcr()">重新上傳</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><!-- end page-finance -->
+
   <!-- ── 帳號管理 ── -->
   <div class="page" id="page-adminmgr" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -1398,6 +1532,66 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
   </div>
 </div>
 
+<!-- Finance Record Modal -->
+<div class="modal-overlay" id="fin-rec-modal" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header"><span class="modal-title" id="frm-title">新增收支記錄</span><button class="modal-close" onclick="closeFinRecModal()">&times;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="frm-id">
+      <div class="form-row">
+        <div><label class="form-label">日期 *</label><input class="form-input" type="date" id="frm-date"></div>
+        <div><label class="form-label">類型</label>
+          <select class="form-input" id="frm-type" onchange="renderFinCatOptions()">
+            <option value="income">收入</option><option value="expense">支出</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label">類別</label><select class="form-input" id="frm-cat"></select></div>
+        <div><label class="form-label">金額 *</label><input class="form-input" type="number" id="frm-amount" min="0" step="1" placeholder="0"></div>
+      </div>
+      <div class="form-row">
+        <div class="full-width"><label class="form-label">標題 *</label><input class="form-input" id="frm-title-input" placeholder="例：食材採購、客桌消費"></div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label">廠商/店家</label><input class="form-input" id="frm-vendor" placeholder="選填"></div>
+        <div><label class="form-label">發票/單據號碼</label><input class="form-input" id="frm-invoice" placeholder="選填"></div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label">稅額</label><input class="form-input" type="number" id="frm-tax" min="0" step="1" value="0"></div>
+        <div><label class="form-label">備註</label><input class="form-input" id="frm-note" placeholder="選填"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeFinRecModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveFinRec()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Finance Category Modal -->
+<div class="modal-overlay" id="fin-cat-modal" style="display:none">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header"><span class="modal-title" id="fcm-title">新增類別</span><button class="modal-close" onclick="closeFinCatModal()">&times;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="fcm-id">
+      <div class="form-row">
+        <div><label class="form-label">名稱 *</label><input class="form-input" id="fcm-name" placeholder="例：食材成本"></div>
+        <div><label class="form-label">類型</label><select class="form-input" id="fcm-type"><option value="income">收入</option><option value="expense">支出</option></select></div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label">顏色</label><input type="color" id="fcm-color" value="#4a7bda" style="width:100%;height:38px;border:1.5px solid var(--border);border-radius:8px;cursor:pointer"></div>
+        <div><label class="form-label">排序</label><input class="form-input" type="number" id="fcm-sort" value="0"></div>
+      </div>
+      <div><label class="form-label">狀態</label><select class="form-input" id="fcm-active"><option value="1">啟用</option><option value="0">停用</option></select></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeFinCatModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveFinCat()">儲存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Admin Account Modal -->
 <div class="modal-overlay" id="adminacc-modal" style="display:none">
   <div class="modal" style="max-width:520px">
@@ -1445,6 +1639,7 @@ const ALL_MODULES = [
   { key:'salary',  label:'薪資管理' },
   { key:'ann',     label:'公告管理' },
   { key:'holiday', label:'國定假日' },
+  { key:'finance', label:'財務管理' },
 ];
 function hasModule(m) { return ADMIN_IS_SUPER || ADMIN_PERMS.includes(m); }
 
@@ -2150,10 +2345,10 @@ function showPage(page, e) {
   const navEl = document.getElementById('nav-' + page);
   if (navEl) navEl.classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['dash','punch','sched','leave','salary','ann','holiday','adminmgr'].forEach(p =>
+  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
-  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', adminmgr:'帳號管理' };
+  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理' };
   document.getElementById('page-title').textContent = titles[page] || page;
   if (page === 'dash')     initDash();
   if (page === 'punch')    initPunch();
@@ -2162,6 +2357,7 @@ function showPage(page, e) {
   if (page === 'salary')   initSalary();
   if (page === 'ann')      initAnn();
   if (page === 'holiday')  initHoliday();
+  if (page === 'finance')  initFinance();
   if (page === 'adminmgr') loadAdminAccounts();
 }
 
@@ -3887,7 +4083,7 @@ function printSalarySlip() {
     <div class="sign-cell">人事確認</div>
     <div class="sign-cell">員工簽收</div>
   </div>
-  <script>window.onload=function(){window.print();}<\/script>
+  \x3cscript>window.onload=function(){window.print();}\x3c/script>
   </body></html>`);
   win.document.close();
 }
@@ -4434,6 +4630,360 @@ document.addEventListener('DOMContentLoaded', () => { refreshBadges(); setInterv
     : (ADMIN_PERMS.length ? ADMIN_PERMS[0] : 'dash');
   showPage(firstPage, null);
 })();
+
+// ══════════════════════════════════════════════════════════════
+// 財務管理模組
+// ══════════════════════════════════════════════════════════════
+let finCatList = [], finOcrResult = null, finTrendChart = null, finCatChart = null;
+
+function switchFinTab(tab) {
+  ['dash','records','cats','ocr'].forEach(t => {
+    document.getElementById('fintab-'+t).classList.toggle('active', t===tab);
+    document.getElementById('fin-panel-'+t).style.display = t===tab?'':'none';
+  });
+  if (tab==='records') loadFinRecords();
+  if (tab==='cats')    loadFinCats();
+}
+async function initFinance() {
+  const now = new Date();
+  const m = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('fin-dash-month').value = m;
+  document.getElementById('fin-rec-month').value  = m;
+  await loadFinCats();
+  await loadFinSummary();
+  switchFinTab('dash');
+}
+
+// ── P&L 儀表板 ────────────────────────────────────────────────
+async function loadFinSummary() {
+  const m = document.getElementById('fin-dash-month').value;
+  if (!m) return;
+  const [year, mon] = m.split('-');
+  const {ok, data} = await api(`/api/finance/summary/${year}/${mon}`, {}, true);
+  if (!ok) return;
+
+  const fmt = v => '$' + Math.abs(v).toLocaleString('zh-TW', {minimumFractionDigits:0, maximumFractionDigits:0});
+  document.getElementById('fin-kpi-income').textContent  = fmt(data.income);
+  document.getElementById('fin-kpi-expense').textContent = fmt(data.expense);
+  const netEl = document.getElementById('fin-kpi-net');
+  netEl.textContent = (data.net>=0?'+':'-') + fmt(data.net);
+  netEl.style.color = data.net>=0 ? 'var(--green)' : 'var(--red)';
+
+  // 趨勢圖（近6個月）
+  const months = [...new Set(data.trend.map(t=>t.month))].sort();
+  const incomeData  = months.map(mo => data.trend.find(t=>t.month===mo&&t.type==='income')?.total||0);
+  const expenseData = months.map(mo => data.trend.find(t=>t.month===mo&&t.type==='expense')?.total||0);
+  if (finTrendChart) finTrendChart.destroy();
+  const tc = document.getElementById('fin-trend-chart').getContext('2d');
+  finTrendChart = new Chart(tc, {
+    type: 'bar',
+    data: {
+      labels: months.map(m => m.slice(5)+'月'),
+      datasets: [
+        {label:'收入', data:incomeData,  backgroundColor:'rgba(46,158,107,0.7)', borderRadius:4},
+        {label:'支出', data:expenseData, backgroundColor:'rgba(214,66,66,0.7)',  borderRadius:4},
+      ]
+    },
+    options: { responsive:true, plugins:{legend:{position:'top',labels:{font:{size:11}}}},
+               scales:{y:{ticks:{callback:v=>'$'+v.toLocaleString()},grid:{color:'rgba(0,0,0,0.05)'}}}} }
+  });
+
+  // 支出分類圓餅圖
+  const expCats = data.by_category.filter(c=>c.type==='expense').slice(0,8);
+  if (finCatChart) finCatChart.destroy();
+  if (expCats.length) {
+    const cc = document.getElementById('fin-cat-chart').getContext('2d');
+    finCatChart = new Chart(cc, {
+      type: 'doughnut',
+      data: {
+        labels: expCats.map(c=>c.name),
+        datasets: [{data: expCats.map(c=>c.total), backgroundColor: expCats.map(c=>c.color||'#8892a4'), borderWidth:2}]
+      },
+      options: { responsive:true, plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:10}}} }
+    });
+  }
+
+  // 類別明細列表
+  const renderCatList = (id, items) => {
+    const el = document.getElementById(id);
+    if (!items.length) { el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:4px 0">本月無記錄</div>'; return; }
+    el.innerHTML = items.map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:13px;display:flex;align-items:center;gap:6px">
+          <span style="width:10px;height:10px;border-radius:2px;background:${c.color};display:inline-block"></span>
+          ${escHtml(c.name)}
+        </span>
+        <span style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600">$${c.total.toLocaleString()}</span>
+      </div>`).join('');
+  };
+  renderCatList('fin-income-cats',  data.by_category.filter(c=>c.type==='income'));
+  renderCatList('fin-expense-cats', data.by_category.filter(c=>c.type==='expense'));
+}
+
+function exportFinance() {
+  const m = document.getElementById('fin-dash-month').value;
+  window.open(`/api/finance/export${m?'?month='+m:''}`, '_blank');
+}
+
+// ── 收支記錄 ──────────────────────────────────────────────────
+async function loadFinRecords() {
+  const month = document.getElementById('fin-rec-month').value;
+  const type  = document.getElementById('fin-rec-type').value;
+  const params = new URLSearchParams();
+  if (month) params.set('month', month);
+  if (type)  params.set('type', type);
+  const {ok, data} = await api('/api/finance/records?' + params, {}, true);
+  const tb = document.getElementById('fin-rec-tbody');
+  if (!ok || !data.length) {
+    tb.innerHTML = '<tr><td colspan="9" class="empty-state"><div class="empty-state-text">無記錄</div></td></tr>';
+    document.getElementById('fin-rec-footer').style.display = 'none'; return;
+  }
+  let totalIncome=0, totalExpense=0;
+  tb.innerHTML = data.map(r => {
+    if (r.type==='income') totalIncome+=r.amount; else totalExpense+=r.amount;
+    const typeBadge = r.type==='income'
+      ? '<span class="badge badge-ok">收入</span>'
+      : '<span class="badge" style="background:rgba(214,66,66,0.12);color:var(--red)">支出</span>';
+    const catDot = r.category_color ? `<span style="width:8px;height:8px;border-radius:2px;background:${r.category_color};display:inline-block;margin-right:4px"></span>` : '';
+    return `<tr>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${r.record_date}</td>
+      <td>${typeBadge}</td>
+      <td>${catDot}${escHtml(r.category_name||'—')}</td>
+      <td style="font-weight:600">${escHtml(r.title)}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.vendor||'')}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.invoice_no||'')}</td>
+      <td style="text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:${r.type==='income'?'var(--green)':'var(--red)'}">$${r.amount.toLocaleString()}</td>
+      <td style="color:var(--muted);font-size:12px">${escHtml(r.note||'')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-outline btn-sm" onclick="openFinRecModal(${r.id})">編輯</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteFinRec(${r.id})" style="margin-left:4px">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const footer = document.getElementById('fin-rec-footer');
+  footer.style.display='';
+  footer.innerHTML=`共 ${data.length} 筆　收入合計：<strong style="color:var(--green)">$${totalIncome.toLocaleString()}</strong>　支出合計：<strong style="color:var(--red)">$${totalExpense.toLocaleString()}</strong>　淨損益：<strong style="color:${totalIncome-totalExpense>=0?'var(--green)':'var(--red)'}">$${(totalIncome-totalExpense).toLocaleString()}</strong>`;
+}
+
+function renderFinCatOptions() {
+  const type = document.getElementById('frm-type').value;
+  const sel = document.getElementById('frm-cat');
+  sel.innerHTML = '<option value="">未分類</option>' +
+    finCatList.filter(c=>c.type===type&&c.active).map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join('');
+}
+
+function openFinRecModal(id=null) {
+  document.getElementById('frm-id').value = id||'';
+  document.getElementById('frm-title').textContent = id ? '編輯記錄' : '新增收支記錄';
+  if (id) {
+    // Find from table data via API - simpler: re-fetch
+    api(`/api/finance/records?`, {}, true); // preload not strictly needed
+    // We'll use the table rows since we have them; find by iterating
+    const rows = document.querySelectorAll('#fin-rec-tbody tr');
+    // fallback: open blank and let user edit - better to find from finRecords cache
+  }
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('frm-date').value    = today;
+  document.getElementById('frm-type').value    = 'expense';
+  document.getElementById('frm-amount').value  = '';
+  document.getElementById('frm-title-input').value = '';
+  document.getElementById('frm-vendor').value  = '';
+  document.getElementById('frm-invoice').value = '';
+  document.getElementById('frm-tax').value     = '0';
+  document.getElementById('frm-note').value    = '';
+  renderFinCatOptions();
+  if (id) {
+    // Load record data
+    api(`/api/finance/records?`, {}, true).then(()=>{});
+    // Use finRecords cache
+    const r = (window._finRecords||[]).find(x=>x.id===id);
+    if (r) {
+      document.getElementById('frm-date').value    = r.record_date;
+      document.getElementById('frm-type').value    = r.type;
+      renderFinCatOptions();
+      document.getElementById('frm-cat').value    = r.category_id||'';
+      document.getElementById('frm-amount').value  = r.amount;
+      document.getElementById('frm-title-input').value = r.title;
+      document.getElementById('frm-vendor').value  = r.vendor||'';
+      document.getElementById('frm-invoice').value = r.invoice_no||'';
+      document.getElementById('frm-tax').value     = r.tax_amount||0;
+      document.getElementById('frm-note').value    = r.note||'';
+    }
+  }
+  document.getElementById('fin-rec-modal').style.display='flex';
+}
+function closeFinRecModal() { document.getElementById('fin-rec-modal').style.display='none'; }
+async function saveFinRec() {
+  const id = document.getElementById('frm-id').value;
+  const body = {
+    record_date: document.getElementById('frm-date').value,
+    type:        document.getElementById('frm-type').value,
+    category_id: document.getElementById('frm-cat').value || null,
+    title:       document.getElementById('frm-title-input').value.trim(),
+    amount:      parseFloat(document.getElementById('frm-amount').value)||0,
+    tax_amount:  parseFloat(document.getElementById('frm-tax').value)||0,
+    vendor:      document.getElementById('frm-vendor').value.trim(),
+    invoice_no:  document.getElementById('frm-invoice').value.trim(),
+    note:        document.getElementById('frm-note').value.trim(),
+  };
+  if (!body.record_date) { showToast('請選擇日期','error'); return; }
+  if (!body.title)       { showToast('請填寫標題','error'); return; }
+  const url = id ? `/api/finance/records/${id}` : '/api/finance/records';
+  const {ok, data} = await api(url, {method:id?'PUT':'POST', body:JSON.stringify(body)});
+  if (!ok) return;
+  closeFinRecModal(); showToast(id?'已更新':'已新增','success');
+  await loadFinRecords();
+  // Update cache
+  if (!window._finRecords) window._finRecords=[];
+  if (id) window._finRecords = window._finRecords.map(r=>r.id===parseInt(id)?data:r);
+  else window._finRecords.unshift(data);
+}
+async function deleteFinRec(id) {
+  if (!confirm('確定刪除此記錄？')) return;
+  const {ok} = await api(`/api/finance/records/${id}`, {method:'DELETE'});
+  if (!ok) return;
+  showToast('已刪除','success'); await loadFinRecords();
+}
+
+// ── 類別設定 ──────────────────────────────────────────────────
+async function loadFinCats() {
+  const {ok, data} = await api('/api/finance/categories', {}, true);
+  finCatList = ok ? data : [];
+  const renderTbody = (id, type) => {
+    const items = finCatList.filter(c=>c.type===type);
+    document.getElementById(id).innerHTML = items.length
+      ? items.map(c=>`<tr style="opacity:${c.active?1:.5}">
+          <td style="font-weight:600"><span style="width:10px;height:10px;border-radius:2px;background:${c.color};display:inline-block;margin-right:6px;vertical-align:middle"></span>${escHtml(c.name)}</td>
+          <td><div style="width:20px;height:20px;border-radius:4px;background:${c.color};border:1px solid var(--border)"></div></td>
+          <td>${c.sort_order}</td>
+          <td>${c.active?'<span class="badge badge-ok">啟用</span>':'<span class="badge badge-warn">停用</span>'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-outline btn-sm" onclick="openFinCatModal(${c.id})">編輯</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteFinCat(${c.id})" style="margin-left:4px">刪除</button>
+          </td>
+        </tr>`).join('')
+      : '<tr><td colspan="5" class="empty-state"><div class="empty-state-text">尚無類別</div></td></tr>';
+  };
+  renderTbody('fin-cat-income-tbody','income');
+  renderTbody('fin-cat-expense-tbody','expense');
+}
+function openFinCatModal(id=null) {
+  document.getElementById('fcm-id').value = id||'';
+  document.getElementById('fcm-title').textContent = id ? '編輯類別' : '新增類別';
+  if (id) {
+    const c = finCatList.find(x=>x.id===id); if (!c) return;
+    document.getElementById('fcm-name').value   = c.name;
+    document.getElementById('fcm-type').value   = c.type;
+    document.getElementById('fcm-color').value  = c.color||'#4a7bda';
+    document.getElementById('fcm-sort').value   = c.sort_order||0;
+    document.getElementById('fcm-active').value = c.active?'1':'0';
+  } else {
+    ['fcm-name'].forEach(i=>document.getElementById(i).value='');
+    document.getElementById('fcm-type').value='expense';
+    document.getElementById('fcm-color').value='#4a7bda';
+    document.getElementById('fcm-sort').value='0';
+    document.getElementById('fcm-active').value='1';
+  }
+  document.getElementById('fin-cat-modal').style.display='flex';
+}
+function closeFinCatModal() { document.getElementById('fin-cat-modal').style.display='none'; }
+async function saveFinCat() {
+  const id = document.getElementById('fcm-id').value;
+  const body = {
+    name:       document.getElementById('fcm-name').value.trim(),
+    type:       document.getElementById('fcm-type').value,
+    color:      document.getElementById('fcm-color').value,
+    sort_order: parseInt(document.getElementById('fcm-sort').value)||0,
+    active:     document.getElementById('fcm-active').value==='1',
+  };
+  if (!body.name) { showToast('請填寫名稱','error'); return; }
+  const url = id ? `/api/finance/categories/${id}` : '/api/finance/categories';
+  const {ok} = await api(url, {method:id?'PUT':'POST', body:JSON.stringify(body)});
+  if (!ok) return;
+  closeFinCatModal(); showToast(id?'已更新':'已新增','success'); await loadFinCats();
+}
+async function deleteFinCat(id) {
+  if (!confirm('確定刪除此類別？')) return;
+  const {ok} = await api(`/api/finance/categories/${id}`, {method:'DELETE'});
+  if (!ok) return;
+  showToast('已刪除','success'); await loadFinCats();
+}
+
+// ── OCR 辨識 ──────────────────────────────────────────────────
+let ocrFile = null;
+function handleOcrFile(file) {
+  if (!file) return;
+  ocrFile = file;
+  document.getElementById('fin-ocr-filename').textContent = '已選擇：' + file.name;
+  document.getElementById('fin-ocr-btn').disabled = false;
+  document.getElementById('fin-ocr-result-card').style.display='none';
+}
+function handleOcrDrop(e) {
+  e.preventDefault();
+  document.getElementById('fin-ocr-drop').style.borderColor='var(--border)';
+  handleOcrFile(e.dataTransfer.files[0]);
+}
+async function doOcr() {
+  if (!ocrFile) return;
+  const btn = document.getElementById('fin-ocr-btn');
+  btn.disabled=true;
+  document.getElementById('fin-ocr-loading').style.display='';
+  document.getElementById('fin-ocr-result-card').style.display='none';
+  const fd = new FormData(); fd.append('file', ocrFile);
+  const resp = await fetch('/api/finance/ocr', {method:'POST', body:fd});
+  document.getElementById('fin-ocr-loading').style.display='none';
+  const data = await resp.json();
+  if (!resp.ok) { showToast(data.error||'OCR 失敗','error'); btn.disabled=false; return; }
+  finOcrResult = data;
+  // Render result fields
+  const fields = [
+    ['date',          '日期',     data.date||''],
+    ['vendor',        '廠商',     data.vendor||''],
+    ['invoice_no',    '發票號碼', data.invoice_no||''],
+    ['total_amount',  '含稅金額', data.total_amount||''],
+    ['tax_amount',    '稅額',     data.tax_amount||''],
+    ['pre_tax_amount','未稅金額', data.pre_tax_amount||''],
+    ['title',         '建議標題', data.title||''],
+    ['doc_type',      '文件類型', data.doc_type||''],
+  ];
+  document.getElementById('fin-ocr-fields').innerHTML = fields.map(([key,label,val])=>`
+    <div class="form-group">
+      <label class="form-label">${label}</label>
+      <input class="form-input" id="ocr-field-${key}" value="${escHtml(String(val))}">
+    </div>`).join('');
+  document.getElementById('fin-ocr-result-card').style.display='';
+  btn.disabled=false;
+}
+function resetOcr() {
+  ocrFile=null; finOcrResult=null;
+  document.getElementById('fin-ocr-file').value='';
+  document.getElementById('fin-ocr-filename').textContent='';
+  document.getElementById('fin-ocr-btn').disabled=true;
+  document.getElementById('fin-ocr-result-card').style.display='none';
+}
+async function createRecordFromOcr() {
+  if (!finOcrResult) return;
+  const getF = id => document.getElementById('ocr-field-'+id)?.value||'';
+  const body = {
+    record_date: getF('date') || new Date().toISOString().slice(0,10),
+    type:        'expense',
+    title:       getF('title') || getF('vendor') || '未命名',
+    amount:      parseFloat(getF('total_amount'))||0,
+    tax_amount:  parseFloat(getF('tax_amount'))||0,
+    vendor:      getF('vendor'),
+    invoice_no:  getF('invoice_no'),
+    note:        `OCR辨識 - ${finOcrResult.doc_type||''}`,
+    document_id: finOcrResult.document_id||null,
+  };
+  const {ok} = await api('/api/finance/records', {method:'POST', body:JSON.stringify(body)});
+  if (!ok) return;
+  showToast('已建立財務記錄','success');
+  resetOcr();
+  // Switch to records tab
+  switchFinTab('records');
+  document.getElementById('fin-rec-month').value = body.record_date.slice(0,7);
+  await loadFinRecords();
+}
 
 // ── 帳號管理模組 ──────────────────────────────────────────────
 let adminAccList = [];
