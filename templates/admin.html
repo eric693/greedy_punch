@@ -204,6 +204,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-ann"    onclick="showPage('ann',event)">公告管理</a>
     <a href="#" class="nav-item"        id="nav-holiday" onclick="showPage('holiday',event)">國定假日</a>
     <a href="#" class="nav-item"        id="nav-finance" onclick="showPage('finance',event)">財務管理</a>
+    <a href="#" class="nav-item"        id="nav-expense-review" onclick="showPage('expense-review',event)">費用審核<span class="nav-badge" id="badge-expense-review" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
@@ -1400,6 +1401,33 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       </div>
     </div>
   </div><!-- end page-adminmgr -->
+
+  <!-- ── 費用審核 ── -->
+  <div class="page" id="page-expense-review" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="exp-review-status" class="form-input" style="width:120px;padding:7px 10px;font-size:13px" onchange="loadExpenseReview()">
+          <option value="pending">待審核</option>
+          <option value="approved">已核准</option>
+          <option value="rejected">已拒絕</option>
+          <option value="">全部</option>
+        </select>
+        <button class="btn" onclick="loadExpenseReview()">重新整理</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>申請人</th><th>日期</th><th>類型</th><th>金額</th><th>說明</th><th>收據</th><th>狀態</th><th>操作</th>
+          </tr></thead>
+          <tbody id="exp-review-tbody">
+            <tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- end page-expense-review -->
 
 
 </main>
@@ -3073,20 +3101,21 @@ function showPage(page, e) {
   const navEl = document.getElementById('nav-' + page);
   if (navEl) navEl.classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr'].forEach(p =>
+  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
-  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理' };
+  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核' };
   document.getElementById('page-title').textContent = titles[page] || page;
-  if (page === 'dash')     initDash();
-  if (page === 'punch')    initPunch();
-  if (page === 'sched')    initSched();
-  if (page === 'leave')    initLeave();
-  if (page === 'salary')   initSalary();
-  if (page === 'ann')      initAnn();
-  if (page === 'holiday')  initHoliday();
-  if (page === 'finance')  initFinance();
-  if (page === 'adminmgr') loadAdminAccounts();
+  if (page === 'dash')            initDash();
+  if (page === 'punch')           initPunch();
+  if (page === 'sched')           initSched();
+  if (page === 'leave')           initLeave();
+  if (page === 'salary')          initSalary();
+  if (page === 'ann')             initAnn();
+  if (page === 'holiday')         initHoliday();
+  if (page === 'finance')         initFinance();
+  if (page === 'adminmgr')        loadAdminAccounts();
+  if (page === 'expense-review')  loadExpenseReview();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -5674,12 +5703,13 @@ async function toggleAnnPin(id) {
 
 // ── Badges ────────────────────────────────────────────────────
 async function refreshBadges() {
-  const [punchRq, otRq, schedRq1, schedRq2, leaveRq] = await Promise.all([
+  const [punchRq, otRq, schedRq1, schedRq2, leaveRq, expenseRq] = await Promise.all([
     api('/api/punch/requests?status=pending',                    {}, true),
     api('/api/overtime/requests?status=pending',                 {}, true),
     api('/api/schedule/admin/requests?status=pending',           {}, true),
     api('/api/schedule/admin/requests?status=modified_pending',  {}, true),
     api('/api/leave/requests?status=pending',                    {}, true),
+    api('/api/expense/claims?status=pending',                    {}, true),
   ]);
 
   const punchRqCnt = punchRq.ok && Array.isArray(punchRq.data) ? punchRq.data.length : 0;
@@ -5687,11 +5717,13 @@ async function refreshBadges() {
   const schedCnt   = (schedRq1.ok && Array.isArray(schedRq1.data) ? schedRq1.data.length : 0) +
                      (schedRq2.ok && Array.isArray(schedRq2.data) ? schedRq2.data.length : 0);
   const leaveCnt   = leaveRq.ok && Array.isArray(leaveRq.data)  ? leaveRq.data.length  : 0;
+  const expenseCnt = expenseRq.ok && Array.isArray(expenseRq.data) ? expenseRq.data.length : 0;
 
   // ── 左側 nav badge（顯示各模組總待審數）──
   setBadge('badge-punch', punchRqCnt + otCnt);   // 打卡管理 = 補打卡 + 加班
   setBadge('badge-sched', schedCnt);              // 排班管理 = 排休申請
   setBadge('badge-leave', leaveCnt);              // 請假管理 = 請假申請
+  setBadge('badge-expense-review', expenseCnt);   // 費用審核 = 待審費用
 
   // ── Tab 內的小 badge（進入頁面後顯示哪個 tab 有待審）──
   setTabDot('tabdot-punchrq', punchRqCnt);
@@ -7440,6 +7472,60 @@ async function deleteAdminAcc(id, name) {
   const { ok } = await api(`/api/admin/accounts/${id}`, { method:'DELETE' });
   if (!ok) return;
   showToast('已刪除','success'); await loadAdminAccounts();
+}
+
+// ── 費用審核模組 ───────────────────────────────────────────────
+async function loadExpenseReview() {
+  const status = document.getElementById('exp-review-status')?.value ?? 'pending';
+  const tbody = document.getElementById('exp-review-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
+  const qs = status ? `?status=${status}` : '';
+  const {ok, data} = await api(`/api/expense/claims${qs}`, {}, true);
+  const claims = Array.isArray(data) ? data : [];
+  if (!ok || !claims.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無資料</div></td></tr>';
+    setBadge('badge-expense-review', 0);
+    return;
+  }
+  const statusMap   = { pending:'待審核', approved:'已核准', rejected:'已拒絕' };
+  const statusColor = { pending:'var(--accent)', approved:'var(--green)', rejected:'var(--red)' };
+  tbody.innerHTML = claims.map(c => `
+    <tr>
+      <td>${esc(c.staff_name||'—')}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${c.expense_date}</td>
+      <td>${esc(c.category)}</td>
+      <td style="font-family:'DM Mono',monospace;text-align:right">NT$ ${fmtNum(c.amount)}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.note||'—')}</td>
+      <td style="text-align:center">${c.document_id ? `<span style="color:var(--accent);font-size:12px">有附件</span>` : '—'}</td>
+      <td><span style="color:${statusColor[c.status]||'var(--muted)'};font-size:12px;font-weight:600">${statusMap[c.status]||c.status}</span></td>
+      <td>
+        ${c.status === 'pending' ? `
+          <button class="btn btn-sm btn-success" onclick="reviewExpense(${c.id},'approve')">核准</button>
+          <button class="btn btn-sm" style="background:var(--red);color:#fff;margin-left:4px" onclick="promptRejectExpense(${c.id})">拒絕</button>
+        ` : '—'}
+      </td>
+    </tr>
+  `).join('');
+  // Badge: count pending
+  const pendingCnt = status === '' ? claims.filter(c=>c.status==='pending').length : (status==='pending' ? claims.length : 0);
+  setBadge('badge-expense-review', pendingCnt);
+}
+
+async function reviewExpense(id, action, review_note='') {
+  // backend expects action: 'approve' or 'reject', note field: 'review_note'
+  const {ok} = await api(`/api/expense/claims/${id}`, {
+    method:'PUT', body: JSON.stringify({action, review_note})
+  });
+  if (!ok) return;
+  showToast(action==='approve' ? '已核准' : '已拒絕', 'success');
+  loadExpenseReview();
+}
+
+function promptRejectExpense(id) {
+  const note = prompt('拒絕原因（選填）', '');
+  if (note === null) return; // cancelled
+  reviewExpense(id, 'reject', note);
 }
 </script>
 </html>

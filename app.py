@@ -2140,6 +2140,21 @@ def api_shift_assignment_create():
             'blocked': blocked
         }), 422
 
+    # Notify each assigned staff via LINE
+    if created > 0:
+        with get_db() as conn:
+            shift_info = conn.execute(
+                "SELECT name, start_time, end_time FROM shift_types WHERE id=%s", (shift_type_id,)
+            ).fetchone()
+        if shift_info:
+            date_range = f"{min(dates)} ~ {max(dates)}" if len(dates) > 1 else dates[0]
+            msg = (f"[排班通知] 已為您安排班別\n"
+                   f"班別：{shift_info['name']}（{str(shift_info['start_time'])[:5]}～{str(shift_info['end_time'])[:5]}）\n"
+                   f"日期：{date_range}\n"
+                   f"共 {len(dates)} 天，請至員工系統查看完整排班。")
+            for sid in staff_ids:
+                _notify_staff_line(sid, msg)
+
     result = {'created': created}
     if blocked:
         result['warning'] = f'已指派 {created} 筆，跳過 {len(blocked)} 筆（員工當日有核准排休）'
@@ -4073,6 +4088,8 @@ def api_ann_create():
               bool(b.get('is_pinned', False)), b.get('visible_to','all'),
               expires, b.get('author','管理員').strip(),
               bool(b.get('active', True)))).fetchone()
+    if row and row['active']:
+        _broadcast_announcement_line(row['title'], row['content'])
     return jsonify(ann_row(row)), 201
 
 @app.route('/api/announcements/<int:aid>', methods=['PUT'])
@@ -7077,3 +7094,217 @@ def api_finance_tax_sync(year, period):
             created += 1
 
     return jsonify({'created': created, 'tax_payable': tax_payable, 'record_date': record_date})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LINE Broadcast Helper
+# ═══════════════════════════════════════════════════════════════════
+
+def _broadcast_announcement_line(title, content):
+    """廣播公告給所有已綁定 LINE 的在職員工"""
+    try:
+        with get_db() as conn:
+            cfg = conn.execute("SELECT * FROM line_punch_config WHERE id=1").fetchone()
+            if not cfg or not cfg.get('enabled') or not cfg.get('channel_access_token'):
+                return
+            staff_rows = conn.execute(
+                "SELECT line_user_id FROM punch_staff WHERE active=TRUE AND line_user_id IS NOT NULL"
+            ).fetchall()
+        if not staff_rows:
+            return
+        api = LineBotApi(cfg['channel_access_token'])
+        snippet = content[:60] + ('…' if len(content) > 60 else '')
+        msg = f"[公告] {title}\n{snippet}\n\n請至員工系統查看完整公告。"
+        for s in staff_rows:
+            try:
+                api.push_message(s['line_user_id'], TextSendMessage(text=msg))
+            except Exception as e:
+                print(f"[LINE broadcast] {s['line_user_id']}: {e}")
+    except Exception as e:
+        print(f"[LINE broadcast] error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Expense Claims 費用報帳申請
+# ═══════════════════════════════════════════════════════════════════
+
+def _init_expense_db():
+    sqls = [
+        """CREATE TABLE IF NOT EXISTS expense_claims (
+            id                SERIAL PRIMARY KEY,
+            staff_id          INT REFERENCES punch_staff(id) ON DELETE CASCADE,
+            title             TEXT NOT NULL,
+            amount            NUMERIC(12,2) NOT NULL DEFAULT 0,
+            expense_date      DATE NOT NULL,
+            category          TEXT DEFAULT '',
+            note              TEXT DEFAULT '',
+            status            TEXT NOT NULL DEFAULT 'pending',
+            document_id       INT REFERENCES finance_documents(id) ON DELETE SET NULL,
+            review_note       TEXT DEFAULT '',
+            reviewed_by       TEXT DEFAULT '',
+            reviewed_at       TIMESTAMPTZ,
+            finance_record_id INT REFERENCES finance_records(id) ON DELETE SET NULL,
+            created_at        TIMESTAMPTZ DEFAULT NOW()
+        )""",
+    ]
+    for sql in sqls:
+        try:
+            with get_db() as conn:
+                conn.execute(sql)
+        except Exception as e:
+            print(f"[expense_init] {e}")
+
+_init_expense_db()
+
+
+def _expense_row(r):
+    if not r: return None
+    d = dict(r)
+    if d.get('expense_date'): d['expense_date'] = str(d['expense_date'])
+    if d.get('reviewed_at'): d['reviewed_at'] = d['reviewed_at'].isoformat()
+    if d.get('created_at'):  d['created_at']  = d['created_at'].isoformat()
+    if d.get('amount') is not None: d['amount'] = float(d['amount'])
+    return d
+
+
+# ── Employee endpoints ──────────────────────────────────────────
+
+@app.route('/api/expense/my-claims', methods=['GET'])
+def api_expense_my_list():
+    sid = session.get('punch_staff_id')
+    if not sid: return jsonify({'error': '請先登入'}), 401
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT * FROM expense_claims WHERE staff_id=%s ORDER BY created_at DESC LIMIT 50
+        """, (sid,)).fetchall()
+    return jsonify([_expense_row(r) for r in rows])
+
+
+@app.route('/api/expense/my-claims', methods=['POST'])
+def api_expense_submit():
+    sid = session.get('punch_staff_id')
+    if not sid: return jsonify({'error': '請先登入'}), 401
+    b = request.get_json(force=True)
+    if not b.get('title','').strip():  return jsonify({'error': '請填寫標題'}), 400
+    if not b.get('expense_date'):      return jsonify({'error': '請填寫費用日期'}), 400
+    with get_db() as conn:
+        row = conn.execute("""
+            INSERT INTO expense_claims
+              (staff_id, title, amount, expense_date, category, note, document_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING *
+        """, (sid, b['title'].strip(), float(b.get('amount', 0)),
+              b['expense_date'], b.get('category','').strip(),
+              b.get('note','').strip(), b.get('document_id') or None)).fetchone()
+    return jsonify(_expense_row(row)), 201
+
+
+@app.route('/api/expense/ocr', methods=['POST'])
+def api_expense_ocr():
+    """員工自助 OCR — 複用 finance OCR 邏輯"""
+    sid = session.get('punch_staff_id')
+    if not sid: return jsonify({'error': '請先登入'}), 401
+    import anthropic as _ant, base64, re as _re2
+    if not ANTHROPIC_API_KEY:
+        return jsonify({'error': '尚未設定 ANTHROPIC_API_KEY'}), 500
+    file = request.files.get('file')
+    if not file: return jsonify({'error': '請上傳圖片'}), 400
+    raw = file.read()
+    media_type = file.content_type or 'image/jpeg'
+    if media_type not in ('image/jpeg','image/png','image/gif','image/webp'):
+        media_type = 'image/jpeg'
+    img_b64 = base64.standard_b64encode(raw).decode()
+    client = _ant.Anthropic(api_key=ANTHROPIC_API_KEY)
+    try:
+        msg = client.messages.create(
+            model='claude-sonnet-4-6', max_tokens=512,
+            messages=[{'role':'user','content':[
+                {'type':'image','source':{'type':'base64','media_type':media_type,'data':img_b64}},
+                {'type':'text','text':'請辨識此收據或發票，以JSON格式回傳：{"date":"YYYY-MM-DD","vendor":"廠商","title":"建議標題","total_amount":數字,"doc_type":"receipt或invoice"}\n只回傳JSON。'}
+            ]}]
+        )
+        text = msg.content[0].text.strip()
+        text = _re2.sub(r'^```json\s*','',text,flags=_re2.MULTILINE)
+        text = _re2.sub(r'\s*```$','',text,flags=_re2.MULTILINE)
+        result = _json.loads(text)
+    except Exception as e:
+        return jsonify({'error': f'OCR 失敗：{e}'}), 500
+    try:
+        with get_db() as conn:
+            doc = conn.execute("""
+                INSERT INTO finance_documents (filename, doc_type, ocr_raw)
+                VALUES (%s,%s,%s) RETURNING id
+            """, (file.filename, result.get('doc_type',''), _json.dumps(result))).fetchone()
+        result['document_id'] = doc['id']
+    except Exception as e:
+        print(f"[expense_ocr doc] {e}")
+    return jsonify(result)
+
+
+# ── Admin endpoints ─────────────────────────────────────────────
+
+@app.route('/api/expense/claims', methods=['GET'])
+@login_required
+def api_expense_admin_list():
+    status = request.args.get('status', '')
+    conds, params = ['TRUE'], []
+    if status: conds.append("ec.status=%s"); params.append(status)
+    with get_db() as conn:
+        rows = conn.execute(f"""
+            SELECT ec.*, ps.name as staff_name, ps.employee_code
+            FROM expense_claims ec
+            JOIN punch_staff ps ON ps.id=ec.staff_id
+            WHERE {' AND '.join(conds)}
+            ORDER BY ec.created_at DESC
+        """, params).fetchall()
+    result = []
+    for r in rows:
+        d = _expense_row(r)
+        d['staff_name']    = r['staff_name']
+        d['employee_code'] = r['employee_code']
+        result.append(d)
+    return jsonify(result)
+
+
+@app.route('/api/expense/claims/<int:cid>', methods=['PUT'])
+@login_required
+def api_expense_review(cid):
+    b      = request.get_json(force=True)
+    action = b.get('action')  # approve / reject
+    if action not in ('approve','reject'):
+        return jsonify({'error': 'invalid action'}), 400
+    reviewed_by  = session.get('admin_display_name','管理員')
+    review_note  = b.get('review_note','').strip()
+    new_status   = 'approved' if action == 'approve' else 'rejected'
+    finance_rid  = None
+
+    with get_db() as conn:
+        claim = conn.execute("SELECT * FROM expense_claims WHERE id=%s", (cid,)).fetchone()
+        if not claim: return ('', 404)
+
+        if action == 'approve' and b.get('create_finance_record', True):
+            cat = conn.execute(
+                "SELECT id FROM finance_categories WHERE type='expense' AND active=TRUE ORDER BY sort_order LIMIT 1"
+            ).fetchone()
+            frec = conn.execute("""
+                INSERT INTO finance_records
+                  (record_date, category_id, type, title, amount, note, document_id, created_by)
+                VALUES (%s,%s,'expense',%s,%s,%s,%s,'expense-claim') RETURNING id
+            """, (claim['expense_date'], cat['id'] if cat else None,
+                  claim['title'], claim['amount'],
+                  f"報帳申請 #{cid}：{claim['note'] or ''}",
+                  claim['document_id'])).fetchone()
+            finance_rid = frec['id']
+
+        row = conn.execute("""
+            UPDATE expense_claims SET
+              status=%s, reviewed_by=%s, review_note=%s,
+              reviewed_at=NOW(), finance_record_id=%s
+            WHERE id=%s RETURNING *
+        """, (new_status, reviewed_by, review_note, finance_rid, cid)).fetchone()
+
+    if row:
+        extra = f"標題：{claim['title']}　金額：${float(claim['amount']):,.0f}"
+        if review_note: extra += f"\n意見：{review_note}"
+        _notify_review_result(claim['staff_id'], '費用報帳', action, extra)
+
+    return jsonify(_expense_row(row)) if row else ('', 404)

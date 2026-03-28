@@ -174,6 +174,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <button class="tab"        id="tab-overtime"      onclick="switchTab('overtime')">加班申請</button>
         <button class="tab"        id="tab-attendance"    onclick="switchTab('attendance')">出勤月曆</button>
         <button class="tab"        id="tab-payslip"       onclick="switchTab('payslip')">薪資單</button>
+        <button class="tab"        id="tab-expense"       onclick="switchTab('expense')" style="position:relative">費用報帳<span id="expense-badge" style="display:none;position:absolute;top:6px;right:6px;background:var(--red);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;line-height:16px;text-align:center"></span></button>
       </div>
 
       <!-- 打卡 tab -->
@@ -368,6 +369,63 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
         <div id="att-summary" style="display:flex;border-radius:12px;overflow:hidden;margin-bottom:14px;border:1.5px solid var(--border);background:#fff"></div>
         <div id="att-calendar"></div>
       </div>
+
+      <!-- 費用報帳 tab -->
+      <div id="panel-expense" class="tab-body" style="display:none">
+        <!-- 新增費用申請 -->
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-header"><span class="card-title">新增費用申請</span></div>
+          <div style="padding:12px 16px">
+            <div style="margin-bottom:10px">
+              <div class="fl">費用日期</div>
+              <input class="fi" type="date" id="exp-date" style="margin-bottom:8px">
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="fl">費用類型</div>
+              <select class="fi" id="exp-category" style="margin-bottom:8px">
+                <option value="餐費">餐費</option>
+                <option value="交通費">交通費</option>
+                <option value="住宿費">住宿費</option>
+                <option value="辦公用品">辦公用品</option>
+                <option value="其他">其他</option>
+              </select>
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="fl">金額（元）</div>
+              <input class="fi" type="number" id="exp-amount" placeholder="0" min="0" style="margin-bottom:8px">
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="fl">說明</div>
+              <input class="fi" type="text" id="exp-note" placeholder="費用說明（選填）" style="margin-bottom:8px">
+            </div>
+            <!-- 發票/收據上傳 -->
+            <div style="margin-bottom:14px">
+              <div class="fl" style="margin-bottom:6px">發票 / 收據</div>
+              <div id="exp-photo-wrap" style="border:2px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;position:relative;background:var(--bg)" onclick="document.getElementById('exp-photo-input').click()">
+                <input type="file" id="exp-photo-input" accept="image/*" capture="environment" style="display:none" onchange="expPhotoSelected(event)">
+                <div id="exp-photo-hint" style="color:var(--muted);font-size:13px">
+                  <div style="font-size:24px;margin-bottom:6px">📷</div>
+                  點擊上傳或拍照
+                </div>
+                <img id="exp-photo-preview" style="display:none;max-width:100%;max-height:180px;border-radius:8px;object-fit:contain">
+                <div id="exp-ocr-loading" style="display:none;margin-top:8px;font-size:12px;color:var(--accent)">OCR 辨識中...</div>
+              </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%" onclick="submitExpense()">送出申請</button>
+          </div>
+        </div>
+
+        <!-- 我的申請記錄 -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">我的申請記錄</span>
+            <button class="btn btn-sm" onclick="loadMyExpenses()">重新整理</button>
+          </div>
+          <div id="exp-list" style="padding:0 16px 12px">
+            <div style="text-align:center;color:var(--muted);font-size:13px;padding:24px">載入中...</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -451,7 +509,7 @@ function showMain(){
   switchTab('punch');
 }
 function switchTab(tab){
-  ['ann','punch','sched','leave','schedule-view','overtime','attendance','payslip'].forEach(t=>{
+  ['ann','punch','sched','leave','schedule-view','overtime','attendance','payslip','expense'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===tab);
     document.getElementById('panel-'+t).style.display=t===tab?'':'none';
   });
@@ -463,6 +521,7 @@ function switchTab(tab){
   if(tab==='overtime')initOTTab();
   if(tab==='attendance')initAttendanceTab();
   if(tab==='payslip')initPayslipTab();
+  if(tab==='expense')initExpenseTab();
 }
 
 /* GPS */
@@ -1777,6 +1836,111 @@ function showToast(msg,type){
   setTimeout(()=>el.classList.remove('show'),3500);
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+/* ── 費用報帳 ──────────────────────────────────────────────── */
+let _expPhotoBase64 = null;
+let _expDocumentId  = null;
+
+function initExpenseTab() {
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('exp-date').value = today;
+  loadMyExpenses();
+}
+
+async function expPhotoSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  // Preview
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('exp-photo-hint').style.display = 'none';
+    const preview = document.getElementById('exp-photo-preview');
+    preview.src = e.target.result;
+    preview.style.display = '';
+    _expPhotoBase64 = e.target.result; // data URL
+  };
+  reader.readAsDataURL(file);
+  // OCR
+  document.getElementById('exp-ocr-loading').style.display = '';
+  try {
+    const form = new FormData();
+    form.append('file', file);  // backend expects 'file'
+    const res = await fetch('/api/expense/ocr', {method:'POST', body:form});
+    const data = await res.json();
+    document.getElementById('exp-ocr-loading').style.display = 'none';
+    if (!data.error) {
+      const r = data;
+      if (r.total_amount) document.getElementById('exp-amount').value = r.total_amount;
+      if (r.date)         document.getElementById('exp-date').value   = r.date;
+      if (r.title)        document.getElementById('exp-note').value   = r.title;
+      if (r.document_id)  _expDocumentId = r.document_id;
+      showToast('OCR 自動填入完成', 'ok');
+    }
+  } catch(e) {
+    document.getElementById('exp-ocr-loading').style.display = 'none';
+  }
+}
+
+async function submitExpense() {
+  const date     = document.getElementById('exp-date').value;
+  const category = document.getElementById('exp-category').value;
+  const amount   = parseFloat(document.getElementById('exp-amount').value);
+  const note     = document.getElementById('exp-note').value.trim();
+  if (!date || !category || !amount || amount <= 0) {
+    showToast('請填寫日期、類型及金額', 'err'); return;
+  }
+  const body = { title: category, expense_date: date, category, amount, note,
+                 document_id: _expDocumentId };
+  const res = await fetch('/api/expense/my-claims', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!data.error) {
+    showToast('申請已送出', 'ok');
+    // Reset form
+    document.getElementById('exp-amount').value = '';
+    document.getElementById('exp-note').value   = '';
+    document.getElementById('exp-photo-input').value = '';
+    document.getElementById('exp-photo-hint').style.display = '';
+    document.getElementById('exp-photo-preview').style.display = 'none';
+    _expPhotoBase64 = null;
+    _expDocumentId  = null;
+    loadMyExpenses();
+  } else {
+    showToast(data.error || '送出失敗', 'err');
+  }
+}
+
+async function loadMyExpenses() {
+  const list = document.getElementById('exp-list');
+  list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:24px">載入中...</div>';
+  const res = await fetch('/api/expense/my-claims');
+  const claims = await res.json();
+  if (!Array.isArray(claims) || !claims.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:24px">尚無申請記錄</div>';
+    return;
+  }
+  const statusMap = { pending:'審核中', approved:'已核准', rejected:'已拒絕' };
+  const statusColor = { pending:'var(--accent)', approved:'var(--green)', rejected:'var(--red)' };
+  list.innerHTML = claims.map(c => `
+    <div style="border-bottom:1px solid var(--border);padding:12px 0;display:flex;align-items:center;gap:10px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:14px;margin-bottom:2px">${esc(c.category)} — NT$ ${fmtNum(c.amount)}</div>
+        <div style="font-size:12px;color:var(--muted)">${c.expense_date} ${c.note ? '・'+esc(c.note) : ''}</div>
+        ${c.reviewer_note ? `<div style="font-size:11px;color:var(--red);margin-top:2px">備注：${esc(c.reviewer_note)}</div>` : ''}
+      </div>
+      <div style="font-size:12px;font-weight:600;color:${statusColor[c.status]||'var(--muted)'}">
+        ${statusMap[c.status]||c.status}
+      </div>
+      ${c.document_id ? `<span style="font-size:11px;color:var(--accent)">有附件</span>` : ''}
+    </div>
+  `).join('');
+  // Update badge
+  const pending = claims.filter(c => c.status === 'approved').length; // show newly approved
+  const badge = document.getElementById('expense-badge');
+  if (pending > 0) { badge.textContent = pending; badge.style.display = ''; }
+  else badge.style.display = 'none';
+}
 </script>
 </body>
 </html>
