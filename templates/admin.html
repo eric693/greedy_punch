@@ -1220,7 +1220,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <option value="6">第六期（11-12月）</option>
         </select>
         <button class="btn btn-primary btn-sm" onclick="loadTaxReport()">查詢</button>
-        <button class="btn btn-outline btn-sm" id="tax-export-btn" style="display:none" onclick="exportTaxReport()">匯出 Excel</button>
+        <button class="btn btn-outline btn-sm" id="tax-export-btn" style="display:none" onclick="exportTaxReport()">匯出 CSV</button>
+        <button class="btn btn-outline btn-sm" id="tax-sync-btn" style="display:none" onclick="openTaxSyncModal()">整合至財務報表</button>
       </div>
       <div id="tax-panel" style="display:none">
         <!-- 摘要卡片 -->
@@ -1988,6 +1989,30 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeOcrEditModal()">取消</button>
       <button class="btn btn-primary" onclick="saveOcrEdit()">儲存修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tax Sync Modal -->
+<div class="modal-overlay" id="tax-sync-modal" style="display:none">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span class="modal-title">整合稅務分錄至財務報表</span>
+      <button class="modal-close" onclick="closeTaxSyncModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="tsm-preview" style="margin-bottom:16px"></div>
+      <div style="background:var(--bg);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--muted);line-height:1.8">
+        <div style="font-weight:600;color:var(--text);margin-bottom:4px">將建立以下財務分錄：</div>
+        <div id="tsm-entries"></div>
+      </div>
+      <div style="margin-top:12px;font-size:12px;color:var(--muted)">
+        ⚠️ 若此期別已整合過，將建立重複分錄。建議先至「收支記錄」確認是否已存在同名記錄。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeTaxSyncModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmTaxSync()">確認整合</button>
     </div>
   </div>
 </div>
@@ -6925,9 +6950,10 @@ async function loadTaxReport() {
   const { ok, data } = await api(`/api/finance/tax/${year}/${period}`, {}, true);
   if (!ok) return;
   _taxData = data;
-  document.getElementById('tax-empty').style.display   = 'none';
-  document.getElementById('tax-panel').style.display   = '';
+  document.getElementById('tax-empty').style.display      = 'none';
+  document.getElementById('tax-panel').style.display      = '';
   document.getElementById('tax-export-btn').style.display = '';
+  document.getElementById('tax-sync-btn').style.display   = '';
 
   const paySign = data.tax_payable >= 0 ? '' : '';
   const payColor = data.tax_payable < 0 ? 'var(--green)' : 'var(--red)';
@@ -6987,6 +7013,55 @@ function exportTaxReport() {
   a.href = URL.createObjectURL(blob);
   a.download = `tax_${_taxData.year}_period${_taxData.period}.csv`;
   a.click();
+}
+
+function openTaxSyncModal() {
+  if (!_taxData) return;
+  const d = _taxData;
+  const periodLabel = `民國 ${d.roc_year} 年第 ${d.period} 期（${d.months.join('、')}）`;
+  // Last day of the period's last month as record date
+  const lastMonth = d.months[d.months.length - 1];
+  const recordDate = lastMonth + '-28';
+
+  document.getElementById('tsm-preview').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:13px">
+      <div style="background:var(--bg);padding:10px 14px;border-radius:8px">
+        <div style="color:var(--muted);font-size:11px">期別</div>
+        <div style="font-weight:700">${periodLabel}</div>
+      </div>
+      <div style="background:var(--bg);padding:10px 14px;border-radius:8px">
+        <div style="color:var(--muted);font-size:11px">${d.is_refund?'退稅金額':'應繳稅額'}</div>
+        <div style="font-weight:700;color:${d.is_refund?'var(--green)':'var(--red)'}">$${Math.abs(d.tax_payable).toLocaleString()}</div>
+      </div>
+      <div style="background:var(--bg);padding:10px 14px;border-radius:8px">
+        <div style="color:var(--muted);font-size:11px">入帳日期</div>
+        <div style="font-weight:700">${recordDate}</div>
+      </div>
+    </div>`;
+
+  const entries = [];
+  if (d.tax_payable > 0) {
+    entries.push(`• <strong>支出</strong>：應繳營業稅 $${d.tax_payable.toLocaleString()} → 科目「稅費」`);
+  } else if (d.tax_payable < 0) {
+    entries.push(`• <strong>收入</strong>：營業稅退稅 $${Math.abs(d.tax_payable).toLocaleString()} → 科目「其他收入」`);
+  }
+  entries.push(`• <strong>備註欄</strong>：銷項稅 $${d.sales.tax.toLocaleString()} − 進項稅 $${d.purchases.tax.toLocaleString()} = ${d.is_refund?'退稅':'應繳'} $${Math.abs(d.tax_payable).toLocaleString()}`);
+  document.getElementById('tsm-entries').innerHTML = entries.join('<br>');
+  document.getElementById('tax-sync-modal').style.display = 'flex';
+}
+
+function closeTaxSyncModal() {
+  document.getElementById('tax-sync-modal').style.display = 'none';
+}
+
+async function confirmTaxSync() {
+  if (!_taxData) return;
+  const { ok, data } = await api(`/api/finance/tax/${_taxData.year}/${_taxData.period}/sync`, {
+    method: 'POST'
+  });
+  if (!ok) return;
+  showToast(`已建立 ${data.created} 筆稅務分錄，可在「財務報表」查看`, 'success');
+  closeTaxSyncModal();
 }
 
 // ── 應收付款 ──────────────────────────────────────────────────

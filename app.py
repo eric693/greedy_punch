@@ -7002,3 +7002,78 @@ def api_payroll_sync():
             created += 1
 
     return jsonify({'created': created, 'month': month})
+
+
+# ── Tax → Finance sync ──────────────────────────────────────────
+
+@app.route('/api/finance/tax/<int:year>/<int:period>/sync', methods=['POST'])
+@require_module('finance')
+def api_finance_tax_sync(year, period):
+    """將應繳/退稅金額建立為財務分錄，流入損益表"""
+    if period < 1 or period > 6:
+        return jsonify({'error': '期別需為 1-6'}), 400
+    m_start = (period - 1) * 2 + 1
+    m_end   = m_start + 1
+    months  = [f"{year}-{str(m).zfill(2)}" for m in range(m_start, m_end + 1)]
+    roc_year = year - 1911
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT type, SUM(tax_amount) as tax_total
+            FROM finance_records
+            WHERE TO_CHAR(record_date,'YYYY-MM') = ANY(%s)
+              AND tax_amount IS NOT NULL AND tax_amount <> 0
+            GROUP BY type
+        """, (months,)).fetchall()
+
+    sales_tax    = sum(float(r['tax_total']) for r in rows if r['type'] == 'income')
+    purchase_tax = sum(float(r['tax_total']) for r in rows if r['type'] == 'expense')
+    tax_payable  = round(sales_tax - purchase_tax, 2)
+
+    if tax_payable == 0:
+        return jsonify({'created': 0, 'message': '稅額為零，無需建立分錄'})
+
+    # Record date = last day of period's last month
+    import calendar as _cal
+    record_date = f"{year}-{str(m_end).zfill(2)}-{_cal.monthrange(year, m_end)[1]}"
+    note = f"銷項稅 ${round(sales_tax,0):,.0f} − 進項稅 ${round(purchase_tax,0):,.0f} = {'應繳' if tax_payable>0 else '退稅'} ${abs(round(tax_payable,0)):,.0f}"
+    period_label = f"民國{roc_year}年第{period}期（{months[0]}～{months[-1]}）"
+
+    created = 0
+    with get_db() as conn:
+        if tax_payable > 0:
+            # 應繳稅款 → expense under 稅費
+            cat = conn.execute(
+                "SELECT id FROM finance_categories WHERE name='稅費' AND type='expense' LIMIT 1"
+            ).fetchone()
+            if not cat:
+                cat = conn.execute("""
+                    INSERT INTO finance_categories (name, type, color, sort_order, statement_section)
+                    VALUES ('稅費','expense','#8892a4', 99,'operating_expense') RETURNING *
+                """).fetchone()
+            conn.execute("""
+                INSERT INTO finance_records
+                  (record_date, category_id, type, title, amount, tax_amount, note, created_by)
+                VALUES (%s,%s,'expense',%s,%s,0,%s,'tax-sync')
+            """, (record_date, cat['id'],
+                  f"應繳營業稅 {period_label}", tax_payable, note))
+            created += 1
+        else:
+            # 退稅 → income under 其他收入
+            cat = conn.execute(
+                "SELECT id FROM finance_categories WHERE name='其他收入' AND type='income' LIMIT 1"
+            ).fetchone()
+            if not cat:
+                cat = conn.execute("""
+                    INSERT INTO finance_categories (name, type, color, sort_order, statement_section)
+                    VALUES ('其他收入','income','#c8a96e', 99,'other_revenue') RETURNING *
+                """).fetchone()
+            conn.execute("""
+                INSERT INTO finance_records
+                  (record_date, category_id, type, title, amount, tax_amount, note, created_by)
+                VALUES (%s,%s,'income',%s,%s,0,%s,'tax-sync')
+            """, (record_date, cat['id'],
+                  f"營業稅退稅 {period_label}", abs(tax_payable), note))
+            created += 1
+
+    return jsonify({'created': created, 'tax_payable': tax_payable, 'record_date': record_date})
