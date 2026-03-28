@@ -3436,13 +3436,37 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
     ─ 時薪制：打卡實際工時 × 時薪 + 加班費 - 請假扣款
     """
     import calendar as _cal2
+    from datetime import date as _d5, timedelta as _td5, datetime as _dts5, timezone as _tz5
+    _TW5 = _tz5(_td5(hours=8))
+    _today5 = _dts5.now(_TW5).date()
     y, m = int(month[:4]), int(month[5:])
     total_work_days = work_days
+    scheduled_dates = set()
+
     if total_work_days is None:
-        days_in_month = _cal2.monthrange(y, m)[1]
-        from datetime import date as _d5
-        total_work_days = sum(1 for d in range(1, days_in_month + 1)
-                              if _d5(y, m, d).weekday() != 6)
+        # 1. 優先從排班取工作日
+        shift_date_rows = conn.execute("""
+            SELECT DISTINCT date FROM shift_assignments
+            WHERE staff_id=%s AND TO_CHAR(date,'YYYY-MM')=%s
+            ORDER BY date
+        """, (staff['id'], month)).fetchall()
+        if shift_date_rows:
+            scheduled_dates = {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in shift_date_rows}
+            total_work_days = len(scheduled_dates)
+        else:
+            # 2. 備援：日曆扣除週日 + 國定假日
+            holiday_rows = conn.execute("""
+                SELECT date FROM public_holidays
+                WHERE TO_CHAR(date,'YYYY-MM')=%s
+            """, (month,)).fetchall()
+            holiday_dates = {r['date'].isoformat() if hasattr(r['date'], 'isoformat') else str(r['date']) for r in holiday_rows}
+            days_in_month = _cal2.monthrange(y, m)[1]
+            for _d in range(1, days_in_month + 1):
+                _dt = _d5(y, m, _d)
+                _ds = _dt.isoformat()
+                if _dt.weekday() != 6 and _ds not in holiday_dates:
+                    scheduled_dates.add(_ds)
+            total_work_days = len(scheduled_dates)
 
     salary_type    = staff.get('salary_type', 'monthly') or 'monthly'
     base_salary    = float(staff.get('base_salary')    or 0)
@@ -3638,6 +3662,45 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         })
         deduction_total += deduct
 
+    # ── 月薪制：缺勤扣款（打卡記錄核查） ─────────────────────
+    absent_days = 0
+    if salary_type == 'monthly' and scheduled_dates and daily_wage > 0:
+        punch_rows = conn.execute("""
+            SELECT DISTINCT (punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date
+            FROM punch_records WHERE staff_id=%s
+              AND TO_CHAR(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+        """, (staff['id'], month)).fetchall()
+        punched_dates = {r['work_date'].isoformat() if hasattr(r['work_date'], 'isoformat') else str(r['work_date']) for r in punch_rows}
+        # 已核准請假日期集合
+        leave_date_rows = conn.execute("""
+            SELECT start_date, end_date FROM leave_requests
+            WHERE staff_id=%s AND status='approved'
+              AND TO_CHAR(start_date,'YYYY-MM')=%s
+        """, (staff['id'], month)).fetchall()
+        leave_date_set = set()
+        for _lr in leave_date_rows:
+            _ld = _lr['start_date']
+            _le = _lr['end_date']
+            while _ld <= _le:
+                leave_date_set.add(_ld.isoformat() if hasattr(_ld, 'isoformat') else str(_ld))
+                _ld += _td5(days=1)
+        # 缺勤 = 排班但未打卡且非假日，僅計算過去日期
+        absent_date_list = sorted(
+            ds for ds in scheduled_dates
+            if ds not in punched_dates and ds not in leave_date_set
+               and _d5.fromisoformat(ds) < _today5
+        )
+        absent_days = len(absent_date_list)
+        if absent_days > 0:
+            deduct = round(daily_wage * absent_days, 2)
+            sample = '、'.join(absent_date_list[:3]) + ('等' if absent_days > 3 else '')
+            items.append({
+                'id': 'absent', 'name': f'缺勤扣款（{absent_days} 天）', 'type': 'deduction',
+                'amount': deduct, 'formula': '',
+                'calc_note': f'{absent_days} 天 × 日薪 ${round(daily_wage, 0)}（{sample}）',
+            })
+            deduction_total += deduct
+
     net_pay = round(allowance_total - deduction_total, 2)
 
     return {
@@ -3653,6 +3716,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'actual_days':        actual_days,
         'leave_days':         leave_days,
         'unpaid_days':        unpaid_days,
+        'absent_days':        absent_days,
         'ot_pay':             ot_pay,
         'allowance_total':    round(allowance_total, 2),
         'deduction_total':    round(deduction_total, 2),

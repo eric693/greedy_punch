@@ -4546,6 +4546,7 @@ async function openSalDetail(id) {
         <span><span style="color:var(--muted)">實際出勤：</span><strong>${data.actual_days} 天</strong></span>
         ${data.leave_days>0?`<span><span style="color:var(--muted)">請假：</span><strong>${data.leave_days} 天</strong></span>`:''}
         ${data.unpaid_days>0?`<span style="color:var(--red)"><span style="color:var(--muted)">無薪假：</span><strong>${data.unpaid_days} 天（日薪 $${fmtNum(Math.round((data.base_salary||0)/30))} × 天數扣款）</strong></span>`:''}
+        ${(data.absent_days||0)>0?`<span style="color:var(--red)"><span style="color:var(--muted)">缺勤：</span><strong>${data.absent_days} 天（-$${fmtNum(Math.round((data.base_salary||0)/30*(data.absent_days||0)))}）</strong></span>`:''}
         ${data.ot_pay>0?`<span style="color:var(--green)"><span style="color:var(--muted)">加班費：</span><strong>+$${fmtNum(data.ot_pay)}</strong></span>`:''}
       </div>
     </div>`;
