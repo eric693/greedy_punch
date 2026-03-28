@@ -7801,9 +7801,9 @@ async function loadPerfReviews() {
   let url = '/api/performance/reviews?';
   if (staffId) url += `staff_id=${staffId}&`;
   if (period)  url += `period=${period}&`;
-  const data = await api(url);
-  if (!data.ok) { tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">載入失敗</div></td></tr>'; return; }
-  const rows = await data.json();
+  const resp = await api(url);
+  if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">載入失敗</div></td></tr>'; return; }
+  const rows = Array.isArray(resp.data) ? resp.data : [];
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-text">暫無考核記錄</div></td></tr>'; return; }
   const gradeColor = {A:'var(--green)',B:'var(--accent)',C:'#e07b2a',D:'var(--red)'};
   tbody.innerHTML = rows.map(r => `
@@ -7830,7 +7830,7 @@ async function initPerfNewForm() {
   if (staffSel && staffSel.options.length <= 1) {
     const d = await api('/api/punch/staff');
     if (d.ok) {
-      const list = await d.json();
+      const list = Array.isArray(d.data) ? d.data : [];
       staffSel.innerHTML = '<option value="">選擇員工</option>' +
         list.filter(s=>s.active).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
     }
@@ -7851,7 +7851,7 @@ async function initPerfNewForm() {
   if (filterStaff && filterStaff.options.length <= 1) {
     const d2 = await api('/api/punch/staff');
     if (d2.ok) {
-      const list2 = await d2.json();
+      const list2 = Array.isArray(d2.data) ? d2.data : [];
       filterStaff.innerHTML = '<option value="">全部員工</option>' +
         list2.filter(s=>s.active).map(s=>`<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
     }
@@ -7863,7 +7863,7 @@ async function _loadPerfTemplateOptions() {
   if (!tmplSel) return;
   const d = await api('/api/performance/templates');
   if (!d.ok) return;
-  _perfTemplates = await d.json();
+  _perfTemplates = Array.isArray(d.data) ? d.data : [];
   tmplSel.innerHTML = '<option value="">選擇範本</option>' +
     _perfTemplates.filter(t=>t.active).map(t=>`<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
 }
@@ -7954,7 +7954,7 @@ async function loadPerfTemplates() {
   const tbody = document.getElementById('perf-templates-tbody');
   const d = await api('/api/performance/templates');
   if (!d.ok) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-state-text">載入失敗</div></td></tr>'; return; }
-  const rows = await d.json();
+  const rows = Array.isArray(d.data) ? d.data : [];
   if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-state-text">暫無範本</div></td></tr>'; return; }
   tbody.innerHTML = rows.map(r => `
     <tr>
@@ -8064,7 +8064,7 @@ async function savePerfTemplate(id) {
 async function editPerfTemplate(id) {
   const d = await api('/api/performance/templates');
   if (!d.ok) return;
-  const templates = await d.json();
+  const templates = Array.isArray(d.data) ? d.data : [];
   const tmpl = templates.find(t => t.id === id);
   if (!tmpl) return;
   openPerfTemplateModal(tmpl);

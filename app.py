@@ -7772,9 +7772,9 @@ def api_perf_reviews_list():
     result = []
     for r in rows:
         d = _perf_review_row(r)
-        d['staff_name'] = r['staff_name']
-        d['staff_role'] = r['staff_role']
-        d['tpl_name']   = r['tpl_name'] or ''
+        d['staff_name']   = r['staff_name']
+        d['staff_role']   = r['staff_role']
+        d['template_name'] = r['tpl_name'] or ''
         result.append(d)
     return jsonify(result)
 
@@ -7924,7 +7924,7 @@ def api_perf_my_reviews():
     result = []
     for r in rows:
         d = _perf_review_row(r)
-        d['tpl_name'] = r['tpl_name'] or ''
+        d['template_name'] = r['tpl_name'] or ''
         result.append(d)
     return jsonify(result)
 
