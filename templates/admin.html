@@ -1273,6 +1273,10 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div class="form-group full-width"><label class="form-label">薪資備註</label><input class="form-input" id="ssm-notes" placeholder="選填"></div>
       </div>
       <div id="ssm-annual-info" style="font-size:12px;color:var(--green);margin-top:8px"></div>
+      <div style="margin-top:14px">
+        <label class="form-label" style="margin-bottom:6px;display:block">薪資項目 <span style="font-weight:400;color:var(--muted);font-size:12px">（不勾選則使用全部啟用項目）</span></label>
+        <div id="ssm-items-list" style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;min-height:40px"></div>
+      </div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeSalStaffModal()">取消</button><button class="btn btn-primary" onclick="saveSalStaff()">儲存</button></div>
   </div>
@@ -3459,7 +3463,7 @@ function switchSalaryTab(tab) {
     document.getElementById('salary-panel-'+t).style.display=t===tab?'':'none';
   });
   if (tab==='calc')     loadSalaryRecords();
-  if (tab==='settings') loadSalaryStaff();
+  if (tab==='settings') { loadSalaryStaff(); loadSalaryItems(); }
   if (tab==='items')    loadSalaryItems();
 }
 
@@ -3728,6 +3732,26 @@ function openSalStaffModal(id) {
   const yrs  = s.service_years?s.service_years.toFixed(1):0;
   document.getElementById('ssm-annual-info').textContent =
     days>0 ? `年資 ${yrs} 年 → 特休 ${days} 天/年` : '到職未滿1年，尚無特休';
+  // 渲染薪資項目 checkboxes
+  const selectedIds = s.salary_item_ids || [];
+  const renderItems = async () => {
+    if (!salaryItemsList.length) {
+      const {ok,data} = await api('/api/salary/items',{},true);
+      if (ok) salaryItemsList = data;
+    }
+    const container = document.getElementById('ssm-items-list');
+    if (!salaryItemsList.length) { container.innerHTML='<span style="color:var(--muted);font-size:12px">尚無薪資項目</span>'; return; }
+    container.innerHTML = salaryItemsList.map(it => {
+      const checked = selectedIds.length===0 || selectedIds.includes(it.id);
+      const typeLabel = it.item_type==='allowance'?'<span style="color:var(--green);font-size:10px">加</span>':'<span style="color:#d64242;font-size:10px">扣</span>';
+      return `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:13px">
+        <input type="checkbox" data-item-id="${it.id}" ${checked?'checked':''} style="accent-color:${it.color||'var(--green)'};width:15px;height:15px">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${it.color||'#4a7bda'}"></span>
+        ${typeLabel} ${escHtml(it.name)}
+      </label>`;
+    }).join('');
+  };
+  renderItems();
   document.getElementById('sal-staff-modal').style.display='flex';
 }
 function closeSalStaffModal() { document.getElementById('sal-staff-modal').style.display='none'; }
@@ -3738,6 +3762,10 @@ function toggleSalType() {
 }
 async function saveSalStaff() {
   const id = document.getElementById('ssm-id').value;
+  // 收集勾選的薪資項目；若全部勾選或無項目則存 null（代表使用全部）
+  const checkboxes = document.querySelectorAll('#ssm-items-list input[type=checkbox]');
+  const allChecked = [...checkboxes].every(c=>c.checked);
+  const selectedItemIds = allChecked ? null : [...checkboxes].filter(c=>c.checked).map(c=>parseInt(c.dataset.itemId));
   const body = {
     employee_code: document.getElementById('ssm-code').value.trim(),
     department:    document.getElementById('ssm-dept').value.trim(),
@@ -3752,6 +3780,7 @@ async function saveSalStaff() {
     ot_rate2:      parseFloat(document.getElementById('ssm-ot2').value)||1.67,
     vacation_quota:document.getElementById('ssm-vq').value?parseInt(document.getElementById('ssm-vq').value):null,
     salary_notes:  document.getElementById('ssm-notes').value.trim(),
+    salary_item_ids: selectedItemIds,
   };
   const {ok} = await api(`/api/salary/staff/${id}`, apiPUT(body));
   if (!ok) return;

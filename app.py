@@ -2843,6 +2843,7 @@ def init_salary_db():
             sort_order  INT DEFAULT 0,
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )""",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_item_ids JSONB DEFAULT NULL",
         """CREATE TABLE IF NOT EXISTS salary_records (
             id              SERIAL PRIMARY KEY,
             staff_id        INT REFERENCES punch_staff(id) ON DELETE CASCADE,
@@ -3109,14 +3110,25 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         if insured_salary == 0:
             insured_salary = round(hourly_rate * daily_hours * 30, 0)
 
-        # 時薪制只加入保險類扣除項
-        salary_items_rows = conn.execute("""
-            SELECT * FROM salary_items
-            WHERE active=TRUE
-              AND item_type='deduction'
-              AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
-            ORDER BY sort_order, id
-        """).fetchall()
+        # 時薪制只加入保險類扣除項（若員工有指定則只取指定中的保險項）
+        staff_item_ids = staff.get('salary_item_ids')
+        if staff_item_ids:
+            placeholders = ','.join(['%s'] * len(staff_item_ids))
+            salary_items_rows = conn.execute(f"""
+                SELECT * FROM salary_items
+                WHERE active=TRUE AND id IN ({placeholders})
+                  AND item_type='deduction'
+                  AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
+                ORDER BY sort_order, id
+            """, staff_item_ids).fetchall()
+        else:
+            salary_items_rows = conn.execute("""
+                SELECT * FROM salary_items
+                WHERE active=TRUE
+                  AND item_type='deduction'
+                  AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
+                ORDER BY sort_order, id
+            """).fetchall()
         for it in salary_items_rows:
             amt = _eval_formula(it['formula'] or '', base_salary or insured_salary,
                                 insured_salary, service_years)
@@ -3128,10 +3140,18 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
             deduction_total += amt
 
     else:
-        # 月薪制：跑所有啟用的薪資項目
-        items_rows = conn.execute(
-            "SELECT * FROM salary_items WHERE active=TRUE ORDER BY sort_order, id"
-        ).fetchall()
+        # 月薪制：跑啟用的薪資項目（若員工有指定則只跑指定項目）
+        staff_item_ids = staff.get('salary_item_ids')
+        if staff_item_ids:
+            placeholders = ','.join(['%s'] * len(staff_item_ids))
+            items_rows = conn.execute(
+                f"SELECT * FROM salary_items WHERE active=TRUE AND id IN ({placeholders}) ORDER BY sort_order, id",
+                staff_item_ids
+            ).fetchall()
+        else:
+            items_rows = conn.execute(
+                "SELECT * FROM salary_items WHERE active=TRUE ORDER BY sort_order, id"
+            ).fetchall()
         for it in items_rows:
             formula = it['formula'] or ''
             amt     = float(it['amount'] or 0)
@@ -3417,7 +3437,7 @@ def api_salary_staff_list():
             SELECT id, name, username, role, active, employee_code, department,
                    position_title, hire_date, birth_date, base_salary, insured_salary,
                    daily_hours, ot_rate1, ot_rate2, salary_type, hourly_rate,
-                   vacation_quota, salary_notes
+                   vacation_quota, salary_notes, salary_item_ids
             FROM punch_staff ORDER BY name
         """).fetchall()
     result = []
@@ -3439,13 +3459,16 @@ def api_salary_staff_update(sid):
     def _f(k, default=0): return float(b.get(k, default) or default)
     def _s(k): return b.get(k, '').strip() if b.get(k) else None
     with get_db() as conn:
+        salary_item_ids = b.get('salary_item_ids')
+        salary_item_ids_json = _json.dumps(salary_item_ids) if salary_item_ids is not None else None
         conn.execute("""
             UPDATE punch_staff SET
               employee_code=%s, department=%s, position_title=%s,
               hire_date=%s, birth_date=%s,
               base_salary=%s, insured_salary=%s, daily_hours=%s,
               ot_rate1=%s, ot_rate2=%s, salary_type=%s,
-              hourly_rate=%s, vacation_quota=%s, salary_notes=%s
+              hourly_rate=%s, vacation_quota=%s, salary_notes=%s,
+              salary_item_ids=%s
             WHERE id=%s
         """, (_s('employee_code'), _s('department'), _s('position_title'),
               _s('hire_date'), _s('birth_date'),
@@ -3453,7 +3476,7 @@ def api_salary_staff_update(sid):
               _f('ot_rate1') or 1.33, _f('ot_rate2') or 1.67,
               b.get('salary_type','monthly'),
               _f('hourly_rate'), b.get('vacation_quota') or None,
-              b.get('salary_notes',''), sid))
+              b.get('salary_notes',''), salary_item_ids_json, sid))
         row = conn.execute("SELECT * FROM punch_staff WHERE id=%s", (sid,)).fetchone()
     return jsonify(punch_staff_row(row)) if row else ('', 404)
 
