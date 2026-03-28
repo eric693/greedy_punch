@@ -1419,20 +1419,19 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
   <!-- ── 費用審核 ── -->
   <div class="page" id="page-expense-review" style="display:none">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="exp-review-status" class="form-input" style="width:120px;padding:7px 10px;font-size:13px" onchange="loadExpenseReview()">
-          <option value="pending">待審核</option>
-          <option value="approved">已核准</option>
-          <option value="rejected">已拒絕</option>
-          <option value="">全部</option>
-        </select>
-        <button class="btn" onclick="loadExpenseReview()">重新整理</button>
-      </div>
+    <div class="filter-bar" style="margin-bottom:20px">
+      <span class="filter-label">狀態</span>
+      <select id="exp-review-status" class="filter-input" style="min-width:100px" onchange="loadExpenseReview()">
+        <option value="pending">待審核</option>
+        <option value="approved">已核准</option>
+        <option value="rejected">已拒絕</option>
+        <option value="">全部</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="loadExpenseReview()">重新整理</button>
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table>
+        <table class="data-table">
           <thead><tr>
             <th>申請人</th><th>日期</th><th>類型</th><th>金額</th><th>說明</th><th>收據</th><th>狀態</th><th>操作</th>
           </tr></thead>
@@ -1446,22 +1445,22 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
   <!-- ── 績效考核 ── -->
   <div class="page" id="page-perf" style="display:none">
-    <div style="margin-bottom:16px">
-      <div class="tab-bar" id="perf-tab-bar">
-        <button class="tab-btn active" onclick="switchPerfTab('reviews')">考核記錄</button>
-        <button class="tab-btn" onclick="switchPerfTab('new')">新增考核</button>
-        <button class="tab-btn" onclick="switchPerfTab('templates')">考核範本</button>
-      </div>
+    <div class="inv-tab-bar" id="perf-tab-bar">
+      <button class="inv-tab active" onclick="switchPerfTab('reviews')">考核記錄</button>
+      <button class="inv-tab" onclick="switchPerfTab('new')">新增考核</button>
+      <button class="inv-tab" onclick="switchPerfTab('templates')">考核範本</button>
     </div>
 
     <!-- 考核記錄 tab -->
     <div id="perf-panel-reviews">
-      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
-        <select id="perf-filter-staff" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;min-width:140px">
+      <div class="filter-bar" style="margin-bottom:20px">
+        <span class="filter-label">員工</span>
+        <select id="perf-filter-staff" class="filter-input" style="min-width:140px">
           <option value="">全部員工</option>
         </select>
-        <input type="month" id="perf-filter-period" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
-        <button class="btn btn-primary" onclick="loadPerfReviews()" style="padding:6px 14px;font-size:13px">查詢</button>
+        <span class="filter-label">期間</span>
+        <input type="month" id="perf-filter-period" class="filter-input">
+        <button class="btn btn-primary btn-sm" onclick="loadPerfReviews()">查詢</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -1480,48 +1479,51 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
     <!-- 新增考核 tab -->
     <div id="perf-panel-new" style="display:none">
-      <div style="max-width:640px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:24px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-          <div>
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">員工</label>
-            <select id="pf-staff" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
-              <option value="">選擇員工</option>
-            </select>
+      <div class="card" style="max-width:640px">
+        <div class="card-header"><span class="card-title">新增考核記錄</span></div>
+        <div style="padding:20px 24px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+            <div>
+              <label class="filter-label" style="display:block;margin-bottom:6px">員工</label>
+              <select id="pf-staff" class="form-input" style="width:100%">
+                <option value="">選擇員工</option>
+              </select>
+            </div>
+            <div>
+              <label class="filter-label" style="display:block;margin-bottom:6px">考核範本</label>
+              <select id="pf-template" class="form-input" style="width:100%" onchange="loadPerfTemplateItems()">
+                <option value="">選擇範本</option>
+              </select>
+            </div>
+            <div>
+              <label class="filter-label" style="display:block;margin-bottom:6px">考核期間</label>
+              <input type="month" id="pf-period" class="form-input" style="width:100%">
+            </div>
+            <div>
+              <label class="filter-label" style="display:block;margin-bottom:6px">考核人</label>
+              <input type="text" id="pf-reviewer" class="form-input" style="width:100%" placeholder="考核人姓名">
+            </div>
           </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核範本</label>
-            <select id="pf-template" onchange="loadPerfTemplateItems()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
-              <option value="">選擇範本</option>
-            </select>
+          <div id="pf-items-section" style="margin-bottom:16px;display:none">
+            <div class="filter-label" style="margin-bottom:8px">評分項目</div>
+            <div id="pf-items-list"></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px;font-size:13px;color:var(--muted)">
+              總分：<span id="pf-score-display" style="font-weight:700;color:var(--navy);margin-left:4px">0</span> / <span id="pf-max-display">0</span>
+              &nbsp;→&nbsp; 等級：<span id="pf-grade-display" style="font-weight:700;color:var(--accent)">-</span>
+            </div>
           </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核期間</label>
-            <input type="month" id="pf-period" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+          <div style="margin-bottom:16px">
+            <label class="filter-label" style="display:block;margin-bottom:6px">備註</label>
+            <textarea id="pf-comments" class="form-input" rows="3" placeholder="考核備註（可選）" style="width:100%;resize:vertical"></textarea>
           </div>
-          <div>
-            <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核人</label>
-            <input type="text" id="pf-reviewer" placeholder="考核人姓名" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
-          </div>
+          <button class="btn btn-primary" onclick="submitPerfReview()">送出考核</button>
         </div>
-        <div id="pf-items-section" style="margin-bottom:14px;display:none">
-          <label style="display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">評分項目</label>
-          <div id="pf-items-list"></div>
-          <div style="display:flex;justify-content:flex-end;margin-top:8px;font-size:13px;color:var(--muted)">
-            總分：<span id="pf-score-display" style="font-weight:700;color:var(--navy);margin-left:4px">0</span> / <span id="pf-max-display">0</span>
-            &nbsp;→&nbsp; 等級：<span id="pf-grade-display" style="font-weight:700;color:var(--accent)">-</span>
-          </div>
-        </div>
-        <div style="margin-bottom:14px">
-          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">備註</label>
-          <textarea id="pf-comments" rows="3" placeholder="考核備註（可選）" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px;resize:vertical"></textarea>
-        </div>
-        <button class="btn btn-primary" onclick="submitPerfReview()">送出考核</button>
       </div>
     </div><!-- end perf-panel-new -->
 
     <!-- 考核範本 tab -->
     <div id="perf-panel-templates" style="display:none">
-      <div style="display:flex;gap:8px;margin-bottom:14px">
+      <div style="margin-bottom:14px">
         <button class="btn btn-primary" onclick="openPerfTemplateModal()">+ 新增範本</button>
       </div>
       <div class="table-wrap">
@@ -7780,7 +7782,7 @@ function switchPerfTab(tab) {
   ['reviews','new','templates'].forEach(t => {
     document.getElementById('perf-panel-' + t).style.display = t === tab ? '' : 'none';
   });
-  document.querySelectorAll('#perf-tab-bar .tab-btn').forEach((btn, i) => {
+  document.querySelectorAll('#perf-tab-bar .inv-tab').forEach((btn, i) => {
     btn.classList.toggle('active', ['reviews','new','templates'][i] === tab);
   });
   if (tab === 'reviews')   loadPerfReviews();
@@ -7886,11 +7888,11 @@ function loadPerfTemplateItems() {
   if (!tmpl || !tmpl.items || !tmpl.items.length) { section.style.display='none'; return; }
   section.style.display = '';
   list.innerHTML = tmpl.items.map((item, i) => `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;background:var(--bg);border-radius:6px">
-      <div style="flex:1;font-size:13px;font-weight:500">${escHtml(item.name)}</div>
-      <div style="font-size:12px;color:var(--muted)">(滿分 ${item.max_score||10})</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">
+      <div style="flex:1;font-size:13px;font-weight:500;color:var(--text)">${escHtml(item.name)}</div>
+      <div class="filter-label" style="white-space:nowrap">滿分 ${item.max_score||10}</div>
       <input type="number" id="pf-item-${i}" min="0" max="${item.max_score||10}" value="${item.max_score||10}"
-        style="width:70px;padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:13px;text-align:center"
+        class="form-input" style="width:80px;text-align:center;padding:6px 8px"
         oninput="recalcPerfScore()">
     </div>`).join('');
   recalcPerfScore();
@@ -7995,37 +7997,37 @@ function openPerfTemplateModal(tmpl) {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div>
-          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">範本名稱</label>
-          <input type="text" id="ptm-name" value="${escHtml(tmpl?.name||'')}" placeholder="例：月度績效考核" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+          <label class="filter-label" style="display:block;margin-bottom:5px">範本名稱</label>
+          <input type="text" id="ptm-name" value="${escHtml(tmpl?.name||'')}" placeholder="例：月度績效考核" class="form-input" style="width:100%">
         </div>
         <div>
-          <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">考核週期</label>
-          <select id="ptm-period" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+          <label class="filter-label" style="display:block;margin-bottom:5px">考核週期</label>
+          <select id="ptm-period" class="form-input" style="width:100%">
             ${['月度','季度','半年','年度'].map(p=>`<option value="${p}" ${(tmpl?.period||'月度')===p?'selected':''}>${p}</option>`).join('')}
           </select>
         </div>
       </div>
       <div style="margin-bottom:12px">
-        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-bottom:4px">說明</label>
-        <input type="text" id="ptm-desc" value="${escHtml(tmpl?.description||'')}" placeholder="範本說明（可選）" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:14px">
+        <label class="filter-label" style="display:block;margin-bottom:5px">說明</label>
+        <input type="text" id="ptm-desc" value="${escHtml(tmpl?.description||'')}" placeholder="範本說明（可選）" class="form-input" style="width:100%">
       </div>
       <div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label style="font-size:12px;font-weight:600;color:var(--text)">評分項目</label>
-          <button onclick="addPerfTemplateItem()" style="background:none;border:1px solid var(--accent);color:var(--accent);border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer">+ 新增項目</button>
+          <label class="filter-label">評分項目</label>
+          <button onclick="addPerfTemplateItem()" class="btn btn-sm btn-outline" style="font-size:12px;padding:4px 10px">+ 新增項目</button>
         </div>
         <div id="ptm-items">
           ${items.map((item,i)=>`
             <div class="ptm-item-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-              <input type="text" class="ptm-item-name" value="${escHtml(item.name||'')}" placeholder="項目名稱" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
-              <input type="number" class="ptm-item-max" value="${item.max_score||10}" min="1" max="100" style="width:70px;padding:7px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
-              <button onclick="this.closest('.ptm-item-row').remove()" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;flex-shrink:0">×</button>
+              <input type="text" class="ptm-item-name form-input" value="${escHtml(item.name||'')}" placeholder="項目名稱" style="flex:1">
+              <input type="number" class="ptm-item-max form-input" value="${item.max_score||10}" min="1" max="100" style="width:80px;text-align:center;padding:8px">
+              <button onclick="this.closest('.ptm-item-row').remove()" class="btn btn-ghost" style="padding:6px 10px;font-size:16px;color:var(--red)">×</button>
             </div>`).join('')}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-        <label style="font-size:13px">狀態：</label>
-        <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer">
+        <label class="filter-label">狀態</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;font-family:'Noto Sans TC',sans-serif">
           <input type="checkbox" id="ptm-active" ${(tmpl?.active!==false)?'checked':''}>啟用
         </label>
       </div>
@@ -8043,9 +8045,9 @@ function addPerfTemplateItem() {
   row.className = 'ptm-item-row';
   row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
   row.innerHTML = `
-    <input type="text" class="ptm-item-name" placeholder="項目名稱" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px">
-    <input type="number" class="ptm-item-max" value="10" min="1" max="100" style="width:70px;padding:7px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center">
-    <button onclick="this.closest('.ptm-item-row').remove()" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;flex-shrink:0">×</button>`;
+    <input type="text" class="ptm-item-name form-input" placeholder="項目名稱" style="flex:1">
+    <input type="number" class="ptm-item-max form-input" value="10" min="1" max="100" style="width:80px;text-align:center;padding:8px">
+    <button onclick="this.closest('.ptm-item-row').remove()" class="btn btn-ghost" style="padding:6px 10px;font-size:16px;color:var(--red)">×</button>`;
   container.appendChild(row);
 }
 

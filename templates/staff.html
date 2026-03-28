@@ -23,6 +23,8 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 .clock-date{font-size:12px;color:rgba(255,255,255,.42);margin-top:6px}
 .card{background:var(--surface);border-radius:16px;width:100%;max-width:460px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.38);margin-bottom:14px}
 .card-body{padding:22px 20px}
+.card-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:14px;font-weight:700;color:var(--navy)}
 .login-title{font-size:15px;font-weight:700;color:var(--navy);margin-bottom:16px}
 .fl{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px}
 .fi{width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:9px;font-family:"Noto Sans TC",sans-serif;font-size:15px;color:var(--text);outline:none;transition:border-color .15s;margin-bottom:12px;background:#fff}
@@ -2089,34 +2091,34 @@ async function loadMyPerf() {
     el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:40px">尚無考核記錄</div>';
     return;
   }
-  const gradeColor = {A:'#22c55e',B:'#3b82f6',C:'#f97316',D:'#ef4444'};
-  const gradeBg    = {A:'rgba(34,197,94,0.1)',B:'rgba(59,130,246,0.1)',C:'rgba(249,115,22,0.1)',D:'rgba(239,68,68,0.1)'};
+  const gradeColor = {A:'var(--green)',B:'var(--accent)',C:'#e07b2a',D:'var(--red)'};
+  const gradeBg    = {A:'rgba(0,160,100,0.1)',B:'rgba(74,123,218,0.1)',C:'rgba(224,123,42,0.1)',D:'rgba(214,66,66,0.1)'};
   el.innerHTML = reviews.map(r => {
     const pct = r.max_score > 0 ? Math.round(r.total_score / r.max_score * 100) : 0;
     return `
-    <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);padding:16px;margin-bottom:12px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+    <div class="card" style="border-radius:12px;border:1.5px solid var(--border);box-shadow:none;margin-bottom:12px">
+      <div class="card-header">
         <div>
-          <div style="font-size:15px;font-weight:700;color:var(--navy)">${esc(r.period_label||'')} 考核</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(r.template_name||'')} · ${r.reviewed_at ? r.reviewed_at.slice(0,10) : ''}</div>
+          <div style="font-size:14px;font-weight:700;color:var(--navy);font-family:'Noto Sans TC',sans-serif">${esc(r.period_label||'')} 考核</div>
+          <div class="fl" style="margin-top:2px;margin-bottom:0">${esc(r.template_name||'')} · ${r.reviewed_at ? r.reviewed_at.slice(0,10) : ''}</div>
         </div>
         <div style="text-align:center;background:${gradeBg[r.grade]||'var(--bg)'};border-radius:10px;padding:10px 16px;min-width:64px">
-          <div style="font-size:26px;font-weight:800;color:${gradeColor[r.grade]||'var(--text)'};line-height:1">${r.grade||'-'}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">${pct}%</div>
+          <div style="font-size:26px;font-weight:800;color:${gradeColor[r.grade]||'var(--text)'};line-height:1;font-family:'DM Mono',monospace">${r.grade||'-'}</div>
+          <div class="fl" style="margin-top:2px;margin-bottom:0;text-align:center">${pct}%</div>
         </div>
       </div>
-      <div style="background:var(--bg);border-radius:8px;padding:6px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-          <span style="color:var(--muted)">得分</span>
-          <span style="font-weight:600">${r.total_score||0} / ${r.max_score||0} 分</span>
+      <div style="padding:12px 16px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span class="fl" style="margin-bottom:0">得分</span>
+          <span style="font-size:13px;font-weight:600;font-family:'DM Mono',monospace">${r.total_score||0} / ${r.max_score||0} 分</span>
         </div>
-        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;margin-bottom:10px">
           <div style="width:${pct}%;height:100%;background:${gradeColor[r.grade]||'var(--accent)'};border-radius:4px;transition:width .4s"></div>
         </div>
+        ${r.comments ? `<div style="font-size:12px;color:var(--muted);font-style:italic;font-family:'Noto Sans TC',sans-serif">"${esc(r.comments)}"</div>` : ''}
+        ${r.salary_adjusted ? `<div style="margin-top:8px;font-size:12px;color:var(--green);font-weight:600;font-family:'Noto Sans TC',sans-serif">✓ 薪資調整：${r.salary_delta >= 0 ? '+' : ''}${fmtNum(r.salary_delta)} 元</div>` : ''}
+        ${r.reviewer ? `<div class="fl" style="margin-top:8px;margin-bottom:0">考核人：${esc(r.reviewer)}</div>` : ''}
       </div>
-      ${r.comments ? `<div style="font-size:12px;color:var(--muted);font-style:italic">"${esc(r.comments)}"</div>` : ''}
-      ${r.salary_adjusted ? `<div style="margin-top:8px;font-size:12px;color:#22c55e;font-weight:600">✓ 薪資調整：${r.salary_delta >= 0 ? '+' : ''}${fmtNum(r.salary_delta)} 元</div>` : ''}
-      ${r.reviewer ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">考核人：${esc(r.reviewer)}</div>` : ''}
     </div>`;
   }).join('');
 }
