@@ -2064,6 +2064,45 @@ def api_ot_delete(rid):
     return jsonify({'deleted': rid})
 
 
+@app.route('/api/overtime/monthly-summary', methods=['GET'])
+@login_required
+def api_ot_monthly_summary():
+    month = request.args.get('month', '') or _dt.now().strftime('%Y-%m')
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT
+                ps.id   AS staff_id,
+                ps.name AS staff_name,
+                ps.role AS staff_role,
+                COUNT(*)                                                      AS request_count,
+                SUM(r.ot_hours)                                               AS total_hours,
+                SUM(CASE WHEN r.status='approved' THEN r.ot_hours ELSE 0 END) AS approved_hours,
+                SUM(CASE WHEN r.status='pending'  THEN r.ot_hours ELSE 0 END) AS pending_hours,
+                SUM(CASE WHEN r.status='rejected' THEN r.ot_hours ELSE 0 END) AS rejected_hours,
+                COUNT(CASE WHEN r.status='approved' THEN 1 END)               AS approved_count,
+                COUNT(CASE WHEN r.status='pending'  THEN 1 END)               AS pending_count,
+                COUNT(CASE WHEN r.status='rejected' THEN 1 END)               AS rejected_count
+            FROM overtime_requests r
+            JOIN punch_staff ps ON ps.id = r.staff_id
+            WHERE to_char(r.request_date, 'YYYY-MM') = %s
+            GROUP BY ps.id, ps.name, ps.role
+            ORDER BY total_hours DESC
+        """, (month,)).fetchall()
+    return jsonify([{
+        'staff_id':       r['staff_id'],
+        'staff_name':     r['staff_name'],
+        'staff_role':     r['staff_role'] or '',
+        'request_count':  r['request_count'],
+        'total_hours':    float(r['total_hours']    or 0),
+        'approved_hours': float(r['approved_hours'] or 0),
+        'pending_hours':  float(r['pending_hours']  or 0),
+        'rejected_hours': float(r['rejected_hours'] or 0),
+        'approved_count': r['approved_count'],
+        'pending_count':  r['pending_count'],
+        'rejected_count': r['rejected_count'],
+    } for r in rows])
+
+
 @app.route('/api/overtime/calc-preview', methods=['POST'])
 @login_required
 def api_ot_calc_preview():
