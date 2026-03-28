@@ -687,6 +687,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <button class="inv-tab"        id="schedtab-calendar"   onclick="switchSchedTab('calendar')">排休月曆</button>
       <button class="inv-tab"        id="schedtab-requests"   onclick="switchSchedTab('requests')">排休申請<span class="tab-badge" id="tabdot-schedrq" style="display:none"></span></button>
       <button class="inv-tab"        id="schedtab-summary"    onclick="switchSchedTab('summary')">人員摘要</button>
+      <button class="inv-tab"        id="schedtab-conflicts"  onclick="switchSchedTab('conflicts')" style="position:relative">衝突警示<span id="conflicts-badge" style="display:none;position:absolute;top:4px;right:4px;background:var(--red);color:#fff;border-radius:8px;padding:0 5px;font-size:10px;font-weight:700;line-height:16px"></span></button>
       <button class="inv-tab"        id="schedtab-config"     onclick="switchSchedTab('config')">月份設定</button>
     </div>
 
@@ -696,6 +697,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="shift-month" onchange="loadShiftCalendar()">
         <span style="flex:1"></span>
+        <button class="btn btn-outline btn-sm" onclick="exportShiftExcel()">匯出 Excel</button>
         <button class="btn btn-outline btn-sm" onclick="openShiftImportModal()">匯入班表</button>
         <button class="btn btn-primary btn-sm" onclick="openShiftAssignModal()">指派班別</button>
         <button class="btn btn-outline btn-sm" onclick="loadShiftCalendar()">重新整理</button>
@@ -762,6 +764,18 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           </table>
         </div>
       </div>
+    </div>
+
+    <!-- 衝突警示 -->
+    <div id="sched-panel-conflicts" style="display:none">
+      <div class="filter-bar" style="margin-bottom:16px;gap:12px;flex-wrap:wrap">
+        <span class="filter-label">月份</span>
+        <input class="filter-input" type="month" id="conflicts-month" onchange="loadShiftConflicts()">
+        <span style="flex:1"></span>
+        <button class="btn btn-outline btn-sm" onclick="loadShiftConflicts()">重新檢查</button>
+      </div>
+      <div id="conflicts-summary" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap"></div>
+      <div id="conflicts-list"></div>
     </div>
 
     <!-- 月份設定 -->
@@ -1612,12 +1626,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-body">
       <!-- 格式說明 -->
       <div style="background:var(--bg);border:1.5px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px">
-        <div style="font-weight:600;margin-bottom:6px;color:var(--text)">CSV 格式說明</div>
+        <div style="font-weight:600;margin-bottom:6px;color:var(--text)">檔案格式說明</div>
         <div style="color:var(--muted);line-height:1.8">
-          第一列為表頭：<code style="background:var(--border);padding:1px 5px;border-radius:4px">姓名,日期,班別,備註</code>（備註可省略）<br>
-          或使用員工代碼：<code style="background:var(--border);padding:1px 5px;border-radius:4px">代碼,日期,班別,備註</code><br>
-          日期格式：<code style="background:var(--border);padding:1px 5px;border-radius:4px">YYYY-MM-DD</code>（例：2026-04-01）<br>
-          班別名稱需與系統班別設定完全相符
+          支援 <strong>Excel (.xlsx)</strong> 及 <strong>CSV (.csv)</strong>，第一列為欄位名稱。<br>
+          必要欄位：<code style="background:var(--border);padding:1px 5px;border-radius:4px">姓名</code>（或 <code style="background:var(--border);padding:1px 5px;border-radius:4px">代碼</code>）、<code style="background:var(--border);padding:1px 5px;border-radius:4px">日期</code>（YYYY-MM-DD）、<code style="background:var(--border);padding:1px 5px;border-radius:4px">班別</code><br>
+          班別名稱需與系統班別設定完全相符。<br>
+          <span style="color:var(--accent)">提示：可先用「匯出 Excel」取得現有班表格式再修改匯入。</span>
         </div>
         <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="downloadShiftImportSample()">下載範例 CSV</button>
       </div>
@@ -1627,9 +1641,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
            ondragover="event.preventDefault();this.style.borderColor='var(--green)'"
            ondragleave="this.style.borderColor='var(--border)'"
            ondrop="handleSimDrop(event)">
-        <div style="font-size:13px;color:var(--muted)">點擊選擇 CSV 檔案，或將檔案拖曳至此</div>
+        <div style="font-size:13px;color:var(--muted)">點擊選擇 CSV / Excel 檔案，或拖曳至此</div>
         <div id="sim-filename" style="font-size:12px;color:var(--green);margin-top:6px"></div>
-        <input type="file" id="sim-file-input" accept=".csv,text/csv" style="display:none" onchange="handleSimFile(this.files[0])">
+        <input type="file" id="sim-file-input" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleSimFile(this.files[0])">
       </div>
       <!-- 選項 -->
       <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
@@ -3877,7 +3891,7 @@ function initSched() {
 }
 
 function switchSchedTab(tab) {
-  ['shift','shifttypes','calendar','requests','summary','config'].forEach(t => {
+  ['shift','shifttypes','calendar','requests','summary','conflicts','config'].forEach(t => {
     document.getElementById('schedtab-' + t).classList.toggle('active', t === tab);
     document.getElementById('sched-panel-' + t).style.display = t === tab ? '' : 'none';
   });
@@ -3886,6 +3900,13 @@ function switchSchedTab(tab) {
   if (tab === 'calendar')   loadSchedCalendar();
   if (tab === 'requests')   { loadSchedRequests(); setTabDot('tabdot-schedrq', 0); }
   if (tab === 'summary')    loadSchedSummary();
+  if (tab === 'conflicts') {
+    // sync month from shift calendar if set
+    const shiftM = document.getElementById('shift-month').value;
+    const confM  = document.getElementById('conflicts-month');
+    if (shiftM && !confM.value) confM.value = shiftM;
+    loadShiftConflicts();
+  }
   if (tab === 'config')     loadSchedConfig();
 }
 
@@ -4059,6 +4080,20 @@ async function loadShiftCalendar() {
     });
   }
   renderShiftCalendar(month, punchStaffList, shiftAssigns);
+  // 背景更新衝突 badge
+  _refreshConflictBadge(month);
+}
+async function _refreshConflictBadge(month) {
+  if (!month) return;
+  const { ok, data } = await api(`/api/shifts/conflicts?month=${month}`, {}, true);
+  if (!ok) return;
+  const c = data.conflicts || [];
+  const cnt = c.filter(x => x.severity === 'error' || x.severity === 'warning').length;
+  const badge = document.getElementById('conflicts-badge');
+  if (badge) {
+    badge.textContent = cnt || '';
+    badge.style.display = cnt > 0 ? '' : 'none';
+  }
 }
 function renderShiftCalendar(month, staffList, assigns) {
   const wrap = document.getElementById('shift-cal-wrap');
@@ -4312,6 +4347,95 @@ async function doShiftImport() {
   } else {
     btn.disabled = false;
   }
+}
+
+// ── 班表匯出 Excel ─────────────────────────────────────────────
+function exportShiftExcel() {
+  const month = document.getElementById('shift-month').value;
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+  window.location.href = `/api/shifts/export?month=${month}`;
+}
+
+// ── 排班衝突檢查 ───────────────────────────────────────────────
+async function loadShiftConflicts() {
+  const monthEl = document.getElementById('conflicts-month');
+  if (!monthEl.value) {
+    const now = new Date();
+    monthEl.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+  const month   = monthEl.value;
+  const summary = document.getElementById('conflicts-summary');
+  const list    = document.getElementById('conflicts-list');
+  summary.innerHTML = '<span style="color:var(--muted);font-size:13px">檢查中...</span>';
+  list.innerHTML = '';
+
+  const { ok, data } = await api(`/api/shifts/conflicts?month=${month}`, {}, true);
+  if (!ok) { summary.innerHTML = '<span style="color:var(--red)">載入失敗</span>'; return; }
+
+  const conflicts = data.conflicts || [];
+  const errCnt  = conflicts.filter(c=>c.severity==='error').length;
+  const warnCnt = conflicts.filter(c=>c.severity==='warning').length;
+  const infoCnt = conflicts.filter(c=>c.severity==='info').length;
+
+  // Update tab badge
+  const badge = document.getElementById('conflicts-badge');
+  if (errCnt + warnCnt > 0) {
+    badge.textContent = errCnt + warnCnt;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+
+  // Summary cards
+  summary.innerHTML = [
+    { label: '錯誤', count: errCnt,  color: 'var(--red)',    bg: 'rgba(214,66,66,.08)',  icon: '🚫' },
+    { label: '警告', count: warnCnt, color: 'var(--orange,#e07b2a)', bg: 'rgba(224,123,42,.08)', icon: '⚠️' },
+    { label: '提示', count: infoCnt, color: 'var(--accent)', bg: 'rgba(74,123,218,.08)', icon: 'ℹ️' },
+  ].map(s => `
+    <div style="flex:1;min-width:80px;padding:10px 14px;background:${s.bg};border-radius:10px;border:1.5px solid ${s.color};text-align:center">
+      <div style="font-size:18px">${s.icon}</div>
+      <div style="font-size:22px;font-weight:700;color:${s.color};font-family:'DM Mono',monospace">${s.count}</div>
+      <div style="font-size:11px;color:var(--muted)">${s.label}</div>
+    </div>`).join('');
+
+  if (!conflicts.length) {
+    list.innerHTML = `<div class="card" style="padding:32px;text-align:center">
+      <div style="font-size:32px;margin-bottom:10px">✅</div>
+      <div style="font-size:15px;font-weight:600;color:var(--green)">本月班表無衝突</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">已完成：超時檢查 · 連續排班檢查 · 跨日班別檢查</div>
+    </div>`;
+    return;
+  }
+
+  const sevConfig = {
+    error:   { color:'var(--red)',            bg:'rgba(214,66,66,.06)',   border:'var(--red)',            icon:'🚫', label:'違規' },
+    warning: { color:'var(--orange,#e07b2a)', bg:'rgba(224,123,42,.06)', border:'var(--orange,#e07b2a)', icon:'⚠️', label:'警告' },
+    info:    { color:'var(--accent)',          bg:'rgba(74,123,218,.06)', border:'var(--accent)',          icon:'ℹ️', label:'提示' },
+  };
+  const typeLabel = {
+    overtime_hours:   '超時班別',
+    consecutive_days: '連續排班',
+    midnight_cross:   '跨日班別',
+  };
+
+  list.innerHTML = `<div class="card"><div class="table-wrap"><table>
+    <thead><tr>
+      <th>類型</th><th>嚴重度</th><th>日期</th><th>員工</th><th>班別</th><th>說明</th>
+    </tr></thead>
+    <tbody>
+    ${conflicts.map(c => {
+      const sc = sevConfig[c.severity] || sevConfig.info;
+      return `<tr style="background:${sc.bg}">
+        <td style="font-size:12px;font-weight:600;color:${sc.color}">${typeLabel[c.type]||c.type}</td>
+        <td><span style="font-size:11px;font-weight:700;color:${sc.color};padding:2px 6px;background:${sc.bg};border:1px solid ${sc.border};border-radius:4px">${sc.icon} ${sc.label}</span></td>
+        <td style="font-family:'DM Mono',monospace;font-size:12px">${c.date}</td>
+        <td style="font-weight:600">${escHtml(c.staff_name)}</td>
+        <td style="color:var(--muted);font-size:12px">${escHtml(c.shift_name||'—')}</td>
+        <td style="font-size:12px;color:var(--text)">${escHtml(c.message)}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table></div></div>`;
 }
 
 // ══════════════════════════════════════════════════════════════

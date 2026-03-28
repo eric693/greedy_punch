@@ -2252,43 +2252,66 @@ def api_shift_assignment_batch_delete():
 @require_module('sched')
 def api_shift_import():
     """
-    匯入班表 CSV。
+    匯入班表 CSV 或 Excel (.xlsx)。
     表頭（第一列）：姓名,日期,班別,備註  或  代碼,日期,班別,備註
     日期格式：YYYY-MM-DD
     force=1 query param 可強制覆蓋排休衝突。
     """
     import csv, io as _io
     force = request.args.get('force', '0') == '1'
+    rows = []
 
-    # 支援 multipart file 或 raw text/csv body
     if 'file' in request.files:
-        raw = request.files['file'].read().decode('utf-8-sig')
+        f = request.files['file']
+        fname = (f.filename or '').lower()
+        if fname.endswith('.xlsx') or fname.endswith('.xls'):
+            # ── Excel 解析 ────────────────────────────────────
+            import openpyxl as _opx
+            wb = _opx.load_workbook(_io.BytesIO(f.read()), read_only=True, data_only=True)
+            ws = wb.active
+            all_rows = list(ws.values)
+            if not all_rows:
+                return jsonify({'error': '檔案內容為空'}), 400
+            headers = [str(h).strip() if h is not None else '' for h in all_rows[0]]
+            for row in all_rows[1:]:
+                if all(v is None or str(v).strip() == '' for v in row):
+                    continue  # skip blank rows
+                d = {}
+                for i, h in enumerate(headers):
+                    d[h] = str(row[i]).strip() if i < len(row) and row[i] is not None else ''
+                rows.append(d)
+        else:
+            raw = f.read().decode('utf-8-sig')
+            if not raw.strip():
+                return jsonify({'error': '檔案內容為空'}), 400
+            reader = csv.DictReader(_io.StringIO(raw))
+            if reader.fieldnames is None:
+                return jsonify({'error': '無法解析 CSV 欄位'}), 400
+            reader.fieldnames = [h.strip() for h in reader.fieldnames]
+            rows = list(reader)
     else:
         raw = request.get_data(as_text=True)
+        if not raw.strip():
+            return jsonify({'error': '檔案內容為空'}), 400
+        reader = csv.DictReader(_io.StringIO(raw))
+        if reader.fieldnames is None:
+            return jsonify({'error': '無法解析 CSV 欄位'}), 400
+        reader.fieldnames = [h.strip() for h in reader.fieldnames]
+        rows = list(reader)
 
-    if not raw.strip():
-        return jsonify({'error': '檔案內容為空'}), 400
-
-    reader = csv.DictReader(_io.StringIO(raw))
-    # 正規化欄位名稱（去空白）
-    if reader.fieldnames is None:
-        return jsonify({'error': '無法解析 CSV 欄位'}), 400
-    reader.fieldnames = [f.strip() for f in reader.fieldnames]
-
-    # 確認必要欄位存在
-    has_name = '姓名' in reader.fieldnames
-    has_code = '代碼' in reader.fieldnames
-    if not (has_name or has_code):
-        return jsonify({'error': 'CSV 缺少「姓名」或「代碼」欄位'}), 400
-    if '日期' not in reader.fieldnames:
-        return jsonify({'error': 'CSV 缺少「日期」欄位'}), 400
-    if '班別' not in reader.fieldnames:
-        return jsonify({'error': 'CSV 缺少「班別」欄位'}), 400
-
-    rows = list(reader)
     if not rows:
-        return jsonify({'error': 'CSV 無資料列'}), 400
+        return jsonify({'error': '無資料列'}), 400
 
+    # 確認必要欄位
+    all_keys = rows[0].keys() if rows else []
+    has_name = '姓名' in all_keys
+    has_code = '代碼' in all_keys
+    if not (has_name or has_code):
+        return jsonify({'error': '檔案缺少「姓名」或「代碼」欄位'}), 400
+    if '日期' not in all_keys:
+        return jsonify({'error': '檔案缺少「日期」欄位'}), 400
+    if '班別' not in all_keys:
+        return jsonify({'error': '檔案缺少「班別」欄位'}), 400
     with get_db() as conn:
         # 預先建立索引，避免逐列查詢
         staff_by_name = {r['name']: r['id'] for r in conn.execute(
@@ -2374,6 +2397,230 @@ def api_shift_import():
     else:
         result['message'] = f'匯入完成：共 {created} 筆排班'
     return jsonify(result), 201
+
+
+@app.route('/api/shifts/conflicts', methods=['GET'])
+@require_module('sched')
+def api_shift_conflicts():
+    """
+    偵測班表衝突與警示：
+    - overtime_hours : 單班時數 > 10 小時
+    - midnight_cross : 跨日班別（結束時間 < 開始時間）
+    - consecutive_days : 連續排班 >= 6 天（6天警告，7天以上錯誤）
+    """
+    month = request.args.get('month', '')
+    if not month:
+        return jsonify({'error': '請指定月份'}), 400
+
+    from datetime import date as _dc, timedelta as _tdc
+
+    conflicts = []
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT sa.staff_id, sa.shift_date,
+                   ps.name  AS staff_name,
+                   st.name  AS shift_name,
+                   st.start_time, st.end_time
+            FROM shift_assignments sa
+            JOIN punch_staff  ps ON ps.id = sa.staff_id
+            JOIN shift_types  st ON st.id = sa.shift_type_id
+            WHERE TO_CHAR(sa.shift_date, 'YYYY-MM') = %s
+            ORDER BY sa.staff_id, sa.shift_date
+        """, (month,)).fetchall()
+
+    # ── 每班時數 & 跨日 ────────────────────────────────────────────
+    for r in rows:
+        s = r['start_time'];  e = r['end_time']
+        sm = s.hour * 60 + s.minute
+        em = e.hour * 60 + e.minute
+        cross = em < sm
+        dur   = ((24 * 60 - sm) + em) if cross else (em - sm)
+        hrs   = dur / 60
+
+        if cross:
+            conflicts.append({
+                'type':       'midnight_cross',
+                'severity':   'info',
+                'date':       str(r['shift_date']),
+                'staff_name': r['staff_name'],
+                'shift_name': r['shift_name'],
+                'message':    f"跨日班別 {str(s)[:5]}～{str(e)[:5]}（共 {hrs:.1f} 小時）",
+            })
+
+        if hrs > 10:
+            conflicts.append({
+                'type':       'overtime_hours',
+                'severity':   'warning' if hrs <= 12 else 'error',
+                'date':       str(r['shift_date']),
+                'staff_name': r['staff_name'],
+                'shift_name': r['shift_name'],
+                'message':    f"單班 {hrs:.1f} 小時，超過 10 小時上限",
+            })
+
+    # ── 連續排班天數 ───────────────────────────────────────────────
+    staff_dates = {}
+    for r in rows:
+        sid = r['staff_id']
+        if sid not in staff_dates:
+            staff_dates[sid] = {'name': r['staff_name'], 'dates': []}
+        staff_dates[sid]['dates'].append(_dc.fromisoformat(str(r['shift_date'])))
+
+    for sid, info in staff_dates.items():
+        dates = sorted(set(info['dates']))
+        streak = [dates[0]]
+        for i in range(1, len(dates)):
+            if (dates[i] - dates[i-1]).days == 1:
+                streak.append(dates[i])
+            else:
+                # evaluate finished streak
+                if len(streak) >= 6:
+                    sev = 'error' if len(streak) >= 7 else 'warning'
+                    conflicts.append({
+                        'type':       'consecutive_days',
+                        'severity':   sev,
+                        'date':       streak[0].isoformat(),
+                        'staff_name': info['name'],
+                        'shift_name': '',
+                        'message':    (
+                            f"連續排班 {len(streak)} 天"
+                            f"（{streak[0].isoformat()} ～ {streak[-1].isoformat()}）"
+                            + ('，違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else '，接近法定上限')
+                        ),
+                    })
+                streak = [dates[i]]
+        # last streak
+        if len(streak) >= 6:
+            sev = 'error' if len(streak) >= 7 else 'warning'
+            conflicts.append({
+                'type':       'consecutive_days',
+                'severity':   sev,
+                'date':       streak[0].isoformat(),
+                'staff_name': info['name'],
+                'shift_name': '',
+                'message':    (
+                    f"連續排班 {len(streak)} 天"
+                    f"（{streak[0].isoformat()} ～ {streak[-1].isoformat()}）"
+                    + ('，違反勞基法每 7 日至少休 1 日' if len(streak) >= 7 else '，接近法定上限')
+                ),
+            })
+
+    # sort: error first, then by date
+    sev_order = {'error': 0, 'warning': 1, 'info': 2}
+    conflicts.sort(key=lambda c: (sev_order.get(c['severity'], 9), c['date']))
+    return jsonify({'month': month, 'count': len(conflicts), 'conflicts': conflicts})
+
+
+@app.route('/api/shifts/export', methods=['GET'])
+@require_module('sched')
+def api_shift_export():
+    """匯出指定月份班表為 Excel (.xlsx)"""
+    month = request.args.get('month', '')
+    if not month:
+        return jsonify({'error': '請指定月份'}), 400
+
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side, GradientFill
+    from openpyxl.utils import get_column_letter
+    from io import BytesIO
+    import calendar as _cal2
+    from datetime import date as _de
+
+    y, mo = int(month[:4]), int(month[5:7])
+    days_in_month = _cal2.monthrange(y, mo)[1]
+    DAYS_CN = ['一','二','三','四','五','六','日']
+
+    with get_db() as conn:
+        staff_list = conn.execute(
+            "SELECT id, name, employee_code, role FROM punch_staff WHERE active=TRUE ORDER BY name"
+        ).fetchall()
+        assigns = conn.execute("""
+            SELECT sa.staff_id, sa.shift_date, sa.note,
+                   st.name AS shift_name, st.start_time, st.end_time
+            FROM shift_assignments sa
+            JOIN shift_types st ON st.id = sa.shift_type_id
+            WHERE TO_CHAR(sa.shift_date, 'YYYY-MM') = %s
+        """, (month,)).fetchall()
+        holidays = {str(r['date']) for r in conn.execute(
+            "SELECT date FROM public_holidays WHERE TO_CHAR(date,'YYYY-MM')=%s", (month,)
+        ).fetchall()}
+
+    lookup = {}
+    for a in assigns:
+        key = (a['staff_id'], str(a['shift_date']))
+        lookup[key] = f"{a['shift_name']}\n{str(a['start_time'])[:5]}~{str(a['end_time'])[:5]}"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{month} 班表"
+
+    # ── 樣式定義 ─────────────────────────────────────────────
+    navy_fill   = PatternFill('solid', fgColor='0F1C3A')
+    grey_fill   = PatternFill('solid', fgColor='F4F6FA')
+    wkend_fill  = PatternFill('solid', fgColor='FFF5F5')
+    hol_fill    = PatternFill('solid', fgColor='FFF0F0')
+    thin_border = Border(
+        left=Side(style='thin', color='DDDDDD'),
+        right=Side(style='thin', color='DDDDDD'),
+        top=Side(style='thin', color='DDDDDD'),
+        bottom=Side(style='thin', color='DDDDDD'),
+    )
+    hdr_font  = Font(bold=True, color='FFFFFF', size=10)
+    info_font = Font(bold=True, size=10)
+    cell_font = Font(size=9)
+    center    = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    # ── 標題列 ───────────────────────────────────────────────
+    ws.row_dimensions[1].height = 36
+    for col, label in enumerate(['姓名', '代碼', '職稱'], start=1):
+        c = ws.cell(1, col, label)
+        c.font = hdr_font; c.fill = navy_fill; c.alignment = center; c.border = thin_border
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 9
+    ws.column_dimensions['C'].width = 9
+
+    for d in range(1, days_in_month + 1):
+        col  = d + 3
+        dt   = _de(y, mo, d)
+        wd   = dt.weekday()    # 0=Mon … 6=Sun
+        ds   = f"{month}-{d:02d}"
+        is_wkend = wd >= 5      # Sat or Sun
+        is_hol   = ds in holidays
+        c = ws.cell(1, col, f"{d}\n{DAYS_CN[wd]}")
+        c.font      = Font(bold=True, color='FF4444' if is_wkend or is_hol else 'FFFFFF', size=9)
+        c.fill      = PatternFill('solid', fgColor='1A3060') if not (is_wkend or is_hol) else PatternFill('solid', fgColor='8B2020')
+        c.alignment = center
+        c.border    = thin_border
+        ws.column_dimensions[get_column_letter(col)].width = 11
+
+    # ── 員工列 ───────────────────────────────────────────────
+    for row_idx, staff in enumerate(staff_list, start=2):
+        ws.row_dimensions[row_idx].height = 30
+        for col, val in enumerate([staff['name'], staff['employee_code'] or '', staff['role'] or ''], start=1):
+            c = ws.cell(row_idx, col, val)
+            c.font = info_font if col == 1 else cell_font
+            c.fill = grey_fill; c.alignment = center; c.border = thin_border
+
+        for d in range(1, days_in_month + 1):
+            col = d + 3
+            ds  = f"{month}-{d:02d}"
+            dt  = _de(y, mo, d); wd = dt.weekday()
+            val = lookup.get((staff['id'], ds), '')
+            c   = ws.cell(row_idx, col, val)
+            c.font      = Font(size=8, color='1A1A2E' if val else 'CCCCCC')
+            c.alignment = center
+            c.border    = thin_border
+            if not val:
+                c.fill = wkend_fill if wd >= 5 else (hol_fill if ds in holidays else PatternFill('solid', fgColor='FFFFFF'))
+
+    buf = BytesIO()
+    wb.save(buf); buf.seek(0)
+    from flask import send_file
+    return send_file(
+        buf, as_attachment=True,
+        download_name=f"班表_{month}.xlsx",
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 @app.route('/api/shifts/my-schedule', methods=['GET'])
