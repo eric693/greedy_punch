@@ -207,6 +207,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <a href="#" class="nav-item"        id="nav-expense-review" onclick="showPage('expense-review',event)">費用審核<span class="nav-badge" id="badge-expense-review" style="display:none"></span></a>
     <a href="#" class="nav-item"        id="nav-perf" onclick="showPage('perf',event)">績效考核</a>
     <a href="#" class="nav-item"        id="nav-stores"   onclick="showPage('stores',event)">門市管理</a>
+    <a href="#" class="nav-item"        id="nav-training" onclick="showPage('training',event)">教育訓練</a>
     <a href="#" class="nav-item"        id="nav-adminmgr" onclick="showPage('adminmgr',event)" style="display:none">帳號管理</a>
   </nav>
   <div class="sidebar-bottom">
@@ -963,7 +964,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="filter-bar" style="margin-bottom:20px;gap:12px;flex-wrap:wrap">
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sal-month" onchange="loadSalaryRecords()">
-        <button class="btn btn-primary btn-sm" onclick="generateSalary()">自動產生薪資</button>
+        <button class="btn btn-outline btn-sm" onclick="previewSalary()">預覽計算明細</button>
+        <button class="btn btn-primary btn-sm" onclick="generateSalary()">確認產生薪資</button>
         <button class="btn btn-outline btn-sm" id="sal-confirm-all-btn" onclick="confirmAllSalary()" style="display:none">全部確認</button>
         <button class="btn btn-outline btn-sm" id="sal-bulk-print-btn" onclick="bulkPrintPayslips()" style="display:none">列印全部薪資單</button>
         <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出 CSV</button>
@@ -1586,6 +1588,93 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
   </div><!-- end page-stores -->
 
+  <!-- ── 教育訓練追蹤 ── -->
+  <div class="page" id="page-training" style="display:none">
+
+    <!-- 到期警示橫幅 -->
+    <div id="training-alert-bar" style="display:none;background:var(--red-light,#fee2e2);border:1px solid var(--red,#dc2626);border-radius:10px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:var(--red,#dc2626)"></div>
+
+    <!-- Tab bar -->
+    <div class="inv-tab-bar" id="training-tab-bar">
+      <button class="inv-tab active" onclick="switchTrainingTab('overview')">人員概覽</button>
+      <button class="inv-tab"        onclick="switchTrainingTab('records')">訓練記錄</button>
+      <button class="inv-tab"        onclick="switchTrainingTab('expiring')">即將到期</button>
+    </div>
+
+    <!-- 人員概覽 -->
+    <div id="training-panel-overview">
+      <div class="filter-bar" style="margin-bottom:16px">
+        <button class="btn btn-primary btn-sm" onclick="openTrainingModal()">新增訓練記錄</button>
+        <button class="btn btn-outline btn-sm" onclick="loadTrainingSummary()">重新整理</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>姓名</th><th>部門</th><th>訓練筆數</th>
+              <th style="color:var(--green)">有效</th>
+              <th style="color:var(--amber,#d97706)">即將到期</th>
+              <th style="color:var(--red)">已過期</th>
+              <th>操作</th>
+            </tr></thead>
+            <tbody id="training-summary-tbody">
+              <tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 訓練記錄 -->
+    <div id="training-panel-records" style="display:none">
+      <div class="filter-bar" style="margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <select id="training-filter-staff" class="filter-input" style="min-width:130px" onchange="loadTrainingRecords()">
+          <option value="">全部員工</option>
+        </select>
+        <select id="training-filter-cat" class="filter-input" style="min-width:120px" onchange="loadTrainingRecords()">
+          <option value="">全部類別</option>
+          <option value="food_safety">食品安全</option>
+          <option value="fire_safety">消防安全</option>
+          <option value="first_aid">急救訓練</option>
+          <option value="hygiene">衛生管理</option>
+          <option value="service">服務禮儀</option>
+          <option value="equipment">設備操作</option>
+          <option value="general">一般訓練</option>
+          <option value="other">其他</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="openTrainingModal()">新增記錄</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>姓名</th><th>課程名稱</th><th>類別</th>
+              <th>完成日期</th><th>到期日期</th><th>證書號碼</th><th>狀態</th><th>操作</th>
+            </tr></thead>
+            <tbody id="training-records-tbody">
+              <tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 即將到期 -->
+    <div id="training-panel-expiring" style="display:none">
+      <div class="filter-bar" style="margin-bottom:16px">
+        <span class="filter-label">提前預警</span>
+        <select id="training-expiring-days" class="filter-input" onchange="loadExpiringRecords()">
+          <option value="30">30 天內</option>
+          <option value="60" selected>60 天內</option>
+          <option value="90">90 天內</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="loadExpiringRecords()">重新整理</button>
+      </div>
+      <div id="training-expiring-wrap"></div>
+    </div>
+
+  </div><!-- end page-training -->
+
   <!-- ── 費用審核 ── -->
   <div class="page" id="page-expense-review" style="display:none">
     <div class="filter-bar" style="margin-bottom:20px">
@@ -1733,6 +1822,97 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 
 
 </main>
+
+<!-- Salary Preview Modal -->
+<div class="modal-overlay" id="salary-preview-modal" style="display:none">
+  <div class="modal" style="max-width:900px;width:95vw">
+    <div class="modal-header">
+      <span class="modal-title" id="salary-preview-title">薪資計算預覽</span>
+      <button class="modal-close" onclick="document.getElementById('salary-preview-modal').style.display='none'">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div id="salary-preview-loading" style="padding:32px;text-align:center;color:var(--muted)">計算中，請稍候...</div>
+      <div id="salary-preview-content" style="display:none">
+        <div style="padding:12px 16px;background:var(--gray-50,#f9fafb);border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)">
+          ⚠️ 此為預覽，尚未寫入資料庫。確認無誤後請點下方「確認產生薪資」。
+        </div>
+        <div class="table-wrap" style="max-height:60vh;overflow-y:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th>姓名</th><th>類型</th><th>應出勤</th><th>打卡天數</th>
+              <th>請假天數</th><th>加班(筆/時)</th><th>加班費</th>
+              <th>底薪</th><th>津貼</th><th>扣款</th>
+              <th style="color:var(--green)">實領</th>
+            </tr></thead>
+            <tbody id="salary-preview-tbody"></tbody>
+          </table>
+        </div>
+        <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
+          <button class="btn btn-outline" onclick="document.getElementById('salary-preview-modal').style.display='none'">關閉</button>
+          <button class="btn btn-primary" onclick="document.getElementById('salary-preview-modal').style.display='none';generateSalary()">確認產生薪資</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Training Record Modal -->
+<div class="modal-overlay" id="training-modal" style="display:none">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <span class="modal-title" id="training-modal-title">新增訓練記錄</span>
+      <button class="modal-close" onclick="document.getElementById('training-modal').style.display='none'">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tm-id">
+      <div class="form-row">
+        <div>
+          <label class="form-label">員工 *</label>
+          <select class="form-input" id="tm-staff" style="width:100%"></select>
+        </div>
+        <div>
+          <label class="form-label">類別 *</label>
+          <select class="form-input" id="tm-category">
+            <option value="food_safety">食品安全</option>
+            <option value="fire_safety">消防安全</option>
+            <option value="first_aid">急救訓練</option>
+            <option value="hygiene">衛生管理</option>
+            <option value="service">服務禮儀</option>
+            <option value="equipment">設備操作</option>
+            <option value="general">一般訓練</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">課程名稱 *</label>
+        <input class="form-input" id="tm-course" placeholder="例：食品安全衛生管理人員訓練" style="width:100%">
+      </div>
+      <div class="form-row">
+        <div>
+          <label class="form-label">完成日期</label>
+          <input type="date" class="form-input" id="tm-completed" style="width:100%">
+        </div>
+        <div>
+          <label class="form-label">到期日期</label>
+          <input type="date" class="form-input" id="tm-expiry" style="width:100%">
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label class="form-label">證書號碼</label>
+        <input class="form-input" id="tm-cert" placeholder="選填" style="width:100%">
+      </div>
+      <div>
+        <label class="form-label">備註</label>
+        <textarea class="form-input" id="tm-note" rows="2" style="width:100%"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="document.getElementById('training-modal').style.display='none'">取消</button>
+      <button class="btn btn-primary" onclick="saveTrainingRecord()">儲存</button>
+    </div>
+  </div>
+</div>
 
 <!-- Store Modal -->
 <div class="modal-overlay" id="store-modal" style="display:none">
@@ -3440,10 +3620,10 @@ function showPage(page, e) {
   const navEl = document.getElementById('nav-' + page);
   if (navEl) navEl.classList.add('active');
   setTimeout(refreshBadges, 600);
-  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review','perf','stores'].forEach(p =>
+  ['dash','punch','sched','leave','salary','ann','holiday','finance','adminmgr','expense-review','perf','stores','training'].forEach(p =>
     document.getElementById('page-' + p).style.display = p === page ? '' : 'none'
   );
-  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核', perf:'績效考核', stores:'門市管理' };
+  const titles = { dash:'儀表板', punch:'打卡管理', sched:'排班管理', leave:'請假管理', salary:'薪資管理', ann:'公告管理', holiday:'國定假日', finance:'財務管理', adminmgr:'帳號管理', 'expense-review':'費用審核', perf:'績效考核', stores:'門市管理', training:'教育訓練追蹤' };
   document.getElementById('page-title').textContent = titles[page] || page;
   if (page === 'dash')            initDash();
   if (page === 'punch')           initPunch();
@@ -3457,6 +3637,7 @@ function showPage(page, e) {
   if (page === 'expense-review')  loadExpenseReview();
   if (page === 'perf')            initPerf();
   if (page === 'stores')          loadStores();
+  if (page === 'training')        initTraining();
 }
 
 // ── Toast ─────────────────────────────────────────────────────
@@ -8894,6 +9075,254 @@ async function loadAllStaffForAssign() {
   if (!r.ok) return;
   sel.innerHTML = '<option value="">-- 選擇員工 --</option>' +
     r.data.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+}
+
+/* =====================================================================
+   教育訓練追蹤
+   ===================================================================== */
+const TRAINING_CAT_LABELS = {
+  food_safety:'食品安全', fire_safety:'消防安全', first_aid:'急救訓練',
+  hygiene:'衛生管理', service:'服務禮儀', equipment:'設備操作',
+  general:'一般訓練', other:'其他',
+};
+
+async function initTraining() {
+  await loadTrainingStaffFilter();
+  switchTrainingTab('overview');
+}
+
+function switchTrainingTab(tab) {
+  ['overview','records','expiring'].forEach(t => {
+    document.getElementById('training-panel-' + t).style.display = t === tab ? '' : 'none';
+    const btns = document.querySelectorAll('#training-tab-bar .inv-tab');
+    btns.forEach((b, i) => b.classList.toggle('active', ['overview','records','expiring'][i] === tab));
+  });
+  if (tab === 'overview')  loadTrainingSummary();
+  if (tab === 'records')   loadTrainingRecords();
+  if (tab === 'expiring')  loadExpiringRecords();
+}
+
+async function loadTrainingStaffFilter() {
+  const sel = document.getElementById('training-filter-staff');
+  if (!sel) return;
+  const r = await api('/api/salary/staff');
+  if (r.ok) {
+    sel.innerHTML = '<option value="">全部員工</option>' +
+      r.data.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+  }
+  // Also populate the modal staff selector
+  const tmSel = document.getElementById('tm-staff');
+  if (tmSel && r.ok) {
+    tmSel.innerHTML = r.data.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+  }
+}
+
+async function loadTrainingSummary() {
+  const tbody = document.getElementById('training-summary-tbody');
+  const alertBar = document.getElementById('training-alert-bar');
+  tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
+  const r = await api('/api/training/summary');
+  if (!r.ok) { tbody.innerHTML = '<tr><td colspan="7" style="color:var(--red)">載入失敗</td></tr>'; return; }
+  const data = r.data;
+
+  // Show alert if any expiring soon / expired
+  const urgentCount = data.reduce((s, d) => s + d.expiring_soon + d.expired, 0);
+  if (urgentCount > 0) {
+    alertBar.style.display = '';
+    const expiredCount  = data.reduce((s, d) => s + d.expired, 0);
+    const expiringCount = data.reduce((s, d) => s + d.expiring_soon, 0);
+    alertBar.innerHTML = `⚠️ 共有 <strong>${expiredCount}</strong> 筆證書已過期、<strong>${expiringCount}</strong> 筆 60 天內到期，請盡速安排補訓。`;
+  } else {
+    alertBar.style.display = 'none';
+  }
+
+  if (!data.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">尚無員工資料</div></td></tr>'; return; }
+  tbody.innerHTML = data.map(d => `
+    <tr>
+      <td>${escHtml(d.name)}</td>
+      <td style="color:var(--muted)">${escHtml(d.department||'')}</td>
+      <td style="text-align:center">${d.total}</td>
+      <td style="text-align:center;color:var(--green)">${d.valid}</td>
+      <td style="text-align:center;color:var(--amber,#d97706)">${d.expiring_soon > 0 ? `<strong>${d.expiring_soon}</strong>` : 0}</td>
+      <td style="text-align:center;color:var(--red)">${d.expired > 0 ? `<strong>${d.expired}</strong>` : 0}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="openTrainingModal(null,${d.id})">新增</button>
+        <button class="btn btn-sm" onclick="viewStaffTraining(${d.id},'${escHtml(d.name)}')">查看</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function loadTrainingRecords() {
+  const tbody = document.getElementById('training-records-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr>';
+  const staffId  = document.getElementById('training-filter-staff')?.value || '';
+  const category = document.getElementById('training-filter-cat')?.value   || '';
+  let url = '/api/training/records?';
+  if (staffId)  url += `staff_id=${staffId}&`;
+  if (category) url += `category=${encodeURIComponent(category)}&`;
+  const r = await api(url);
+  if (!r.ok) { tbody.innerHTML = '<tr><td colspan="8" style="color:var(--red)">載入失敗</td></tr>'; return; }
+  if (!r.data.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">尚無訓練記錄</div></td></tr>'; return; }
+  tbody.innerHTML = r.data.map(rec => {
+    const statusColor = rec.status === 'expired' ? 'var(--red)' : rec.status === 'expiring_soon' ? 'var(--amber,#d97706)' : 'var(--green)';
+    const statusLabel = rec.status === 'expired' ? '已過期' : rec.status === 'expiring_soon' ? `${rec.days_left}天後到期` : rec.status === 'no_expiry' ? '長期有效' : `${rec.days_left}天後到期`;
+    return `<tr>
+      <td>${escHtml(rec.staff_name)}</td>
+      <td>${escHtml(rec.course_name)}</td>
+      <td><span style="padding:2px 8px;border-radius:6px;font-size:11px;background:var(--gray-100,#f3f4f6)">${TRAINING_CAT_LABELS[rec.category]||rec.category}</span></td>
+      <td>${rec.completed_date||'—'}</td>
+      <td>${rec.expiry_date||'—'}</td>
+      <td style="font-size:12px;color:var(--muted)">${rec.certificate_no||'—'}</td>
+      <td><span style="color:${statusColor};font-weight:600;font-size:12px">${statusLabel}</span></td>
+      <td>
+        <button class="btn btn-sm" onclick="openTrainingModal(${JSON.stringify(rec).replace(/"/g,'&quot;')})">編輯</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteTrainingRecord(${rec.id})">刪除</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadExpiringRecords() {
+  const days = document.getElementById('training-expiring-days')?.value || 60;
+  const wrap = document.getElementById('training-expiring-wrap');
+  wrap.innerHTML = '<div style="color:var(--muted);padding:24px;text-align:center">載入中...</div>';
+  const r = await api(`/api/training/records?expiring=${days}`);
+  if (!r.ok) { wrap.innerHTML = '<div style="color:var(--red)">載入失敗</div>'; return; }
+
+  // Also fetch expired
+  const rExp = await api('/api/training/records?expired=1');
+  const expired = rExp.ok ? rExp.data : [];
+
+  const allRecs = [...expired, ...r.data.filter(x => x.status !== 'expired')];
+  if (!allRecs.length) {
+    wrap.innerHTML = `<div class="card" style="padding:32px;text-align:center;color:var(--green)">✅ ${days} 天內無到期或已過期訓練記錄</div>`;
+    return;
+  }
+
+  wrap.innerHTML = allRecs.map(rec => {
+    const isBad = rec.status === 'expired';
+    const bg = isBad ? 'var(--red-light,#fee2e2)' : 'var(--amber-light,#fef3c7)';
+    const color = isBad ? 'var(--red)' : 'var(--amber,#d97706)';
+    const label = isBad ? `已過期 ${Math.abs(rec.days_left)} 天` : `${rec.days_left} 天後到期`;
+    return `
+      <div style="background:${bg};border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;gap:14px">
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:14px">${escHtml(rec.staff_name)} — ${escHtml(rec.course_name)}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">
+            ${TRAINING_CAT_LABELS[rec.category]||rec.category}
+            ${rec.completed_date ? '・完成：' + rec.completed_date : ''}
+            ${rec.expiry_date ? '・到期：' + rec.expiry_date : ''}
+          </div>
+        </div>
+        <div style="color:${color};font-weight:700;font-size:13px;white-space:nowrap">${label}</div>
+        <button class="btn btn-sm" onclick="openTrainingModal(${JSON.stringify(rec).replace(/"/g,'&quot;')})">更新</button>
+      </div>`;
+  }).join('');
+}
+
+function viewStaffTraining(staffId, name) {
+  document.getElementById('training-filter-staff').value = staffId;
+  switchTrainingTab('records');
+}
+
+function openTrainingModal(rec, presetStaffId) {
+  document.getElementById('training-modal-title').textContent = rec ? '編輯訓練記錄' : '新增訓練記錄';
+  document.getElementById('tm-id').value          = rec?.id || '';
+  document.getElementById('tm-course').value      = rec?.course_name || '';
+  document.getElementById('tm-category').value    = rec?.category || 'food_safety';
+  document.getElementById('tm-completed').value   = rec?.completed_date || '';
+  document.getElementById('tm-expiry').value      = rec?.expiry_date || '';
+  document.getElementById('tm-cert').value        = rec?.certificate_no || '';
+  document.getElementById('tm-note').value        = rec?.note || '';
+  if (rec?.staff_id) document.getElementById('tm-staff').value = rec.staff_id;
+  else if (presetStaffId) document.getElementById('tm-staff').value = presetStaffId;
+  document.getElementById('training-modal').style.display = 'flex';
+}
+
+async function saveTrainingRecord() {
+  const id = document.getElementById('tm-id').value;
+  const body = {
+    staff_id:       document.getElementById('tm-staff').value,
+    course_name:    document.getElementById('tm-course').value.trim(),
+    category:       document.getElementById('tm-category').value,
+    completed_date: document.getElementById('tm-completed').value || null,
+    expiry_date:    document.getElementById('tm-expiry').value    || null,
+    certificate_no: document.getElementById('tm-cert').value.trim(),
+    note:           document.getElementById('tm-note').value.trim(),
+  };
+  if (!body.staff_id || !body.course_name) { showToast('請填寫員工與課程名稱', 'error'); return; }
+  const r = id
+    ? await api(`/api/training/records/${id}`, apiJSON(body, 'PUT'))
+    : await api('/api/training/records', apiJSON(body));
+  if (r.ok) {
+    document.getElementById('training-modal').style.display = 'none';
+    showToast(id ? '已更新' : '已新增', 'success');
+    loadTrainingSummary();
+    loadTrainingRecords();
+  } else {
+    showToast('儲存失敗：' + (r.error || ''), 'error');
+  }
+}
+
+async function deleteTrainingRecord(id) {
+  if (!confirm('確定刪除此訓練記錄？')) return;
+  const r = await api(`/api/training/records/${id}`, { method: 'DELETE' });
+  if (r.ok) { showToast('已刪除', 'success'); loadTrainingRecords(); loadTrainingSummary(); }
+  else showToast('刪除失敗：' + (r.error || ''), 'error');
+}
+
+/* =====================================================================
+   薪資計算預覽
+   ===================================================================== */
+async function previewSalary() {
+  const month = document.getElementById('sal-month')?.value;
+  if (!month) { showToast('請先選擇月份', 'error'); return; }
+
+  const modal   = document.getElementById('salary-preview-modal');
+  const loading = document.getElementById('salary-preview-loading');
+  const content = document.getElementById('salary-preview-content');
+  const tbody   = document.getElementById('salary-preview-tbody');
+  const title   = document.getElementById('salary-preview-title');
+
+  title.textContent = `薪資計算預覽 — ${month}`;
+  loading.style.display = '';
+  content.style.display = 'none';
+  modal.style.display   = 'flex';
+
+  const r = await api('/api/salary/records/preview', apiJSON({ month }));
+  loading.style.display = 'none';
+  if (!r.ok) { content.style.display = ''; tbody.innerHTML = `<tr><td colspan="11" style="color:var(--red);padding:24px;text-align:center">計算失敗：${escHtml(r.error||'')}</td></tr>`; return; }
+
+  const recs = r.data.records || [];
+  if (!recs.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="empty-state"><div class="empty-state-text">無在職員工資料</div></td></tr>';
+  } else {
+    const totalNet = recs.reduce((s, x) => s + x.net_pay, 0);
+    tbody.innerHTML = recs.map(rec => {
+      const typeLabel = rec.salary_type === 'hourly' ? '時薪' : '月薪';
+      const otLabel   = rec.ot_count > 0 ? `${rec.ot_count}筆 / ${rec.ot_hours}h` : '—';
+      const leaveStyle = rec.unpaid_days > 0 ? 'color:var(--red)' : '';
+      const anomaly   = rec.punch_days === 0 ? '<span style="color:var(--amber,#d97706);font-size:11px">⚠無打卡</span>' : '';
+      return `<tr>
+        <td>${escHtml(rec.staff_name)} ${anomaly}</td>
+        <td style="text-align:center;font-size:11px">${typeLabel}</td>
+        <td style="text-align:center">${rec.work_days}</td>
+        <td style="text-align:center;color:${rec.punch_days===0?'var(--amber,#d97706)':'inherit'}">${rec.punch_days}</td>
+        <td style="text-align:center;${leaveStyle}">${rec.leave_days > 0 ? rec.leave_days : '—'}</td>
+        <td style="text-align:center">${otLabel}</td>
+        <td style="text-align:right">NT$ ${Math.round(rec.ot_pay).toLocaleString()}</td>
+        <td style="text-align:right">NT$ ${Math.round(rec.base_salary).toLocaleString()}</td>
+        <td style="text-align:right;color:var(--green)">${rec.allowance_total > 0 ? '+' + Math.round(rec.allowance_total).toLocaleString() : '—'}</td>
+        <td style="text-align:right;color:var(--red)">${rec.deduction_total > 0 ? '-' + Math.round(rec.deduction_total).toLocaleString() : '—'}</td>
+        <td style="text-align:right;font-weight:700;color:var(--green)">NT$ ${Math.round(rec.net_pay).toLocaleString()}</td>
+      </tr>`;
+    }).join('') + `
+      <tr style="background:var(--gray-50,#f9fafb);font-weight:700">
+        <td colspan="10" style="text-align:right">合計應發薪資</td>
+        <td style="text-align:right;color:var(--green)">NT$ ${Math.round(totalNet).toLocaleString()}</td>
+      </tr>`;
+  }
+  content.style.display = '';
 }
 </script>
 </html>
