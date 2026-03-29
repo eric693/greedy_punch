@@ -272,7 +272,18 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS bank_account TEXT DEFAULT ''",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS account_holder TEXT DEFAULT ''",
         "ALTER TABLE overtime_requests ADD COLUMN IF NOT EXISTS day_type TEXT DEFAULT 'weekday'",
+        "ALTER TABLE overtime_requests ALTER COLUMN start_time DROP NOT NULL",
+        "ALTER TABLE overtime_requests ALTER COLUMN end_time DROP NOT NULL",
         "ALTER TABLE schedule_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()",
+        """CREATE TABLE IF NOT EXISTS shift_staffing_requirements (
+            id            SERIAL PRIMARY KEY,
+            shift_type_id INT REFERENCES shift_types(id) ON DELETE CASCADE,
+            day_of_week   SMALLINT NOT NULL,
+            required_count INT NOT NULL DEFAULT 1,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            updated_at    TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(shift_type_id, day_of_week)
+        )""",
         """CREATE TABLE IF NOT EXISTS admin_accounts (
             id              SERIAL PRIMARY KEY,
             username        TEXT NOT NULL UNIQUE,
@@ -1483,6 +1494,8 @@ def _handle_line_punch_event(event, cfg):
               or text.startswith('出勤紀錄 ') or text.startswith('出勤記錄 ')
               or text.startswith('打卡紀錄 ') or text.startswith('打卡記錄 ')):
             _line_query_monthly_records(staff, user_id, text)
+        elif text.startswith('申請加班'):
+            _line_submit_overtime(staff, user_id, text)
         elif text in ('選單', '功能', '菜單', '?', '？', 'help', 'Help', 'HELP'):
             _line_show_help(staff, user_id)
         else:
@@ -2805,7 +2818,9 @@ def api_ot_review(rid):
     result = ot_req_row(row)
     result['staff_name'] = sn['name'] if sn else ''
     # LINE notification
-    extra = f"{row['request_date']} {row['start_time']}～{row['end_time']} {float(row['ot_hours'])}小時"
+    time_str = (f"{row['start_time']}～{row['end_time']}" if row.get('start_time') and row.get('end_time')
+                else f"{float(row['ot_hours'])} 小時")
+    extra = f"{row['request_date']} {time_str}"
     if action == 'approve' and float(row.get('ot_pay') or 0) > 0:
         extra += f"\n加班費：${float(row['ot_pay']):,.0f}"
     if review_note: extra += f"\n審核意見：{review_note}"
@@ -4835,6 +4850,185 @@ def api_export_attendance_summary():
     )
 
 
+@app.route('/api/attendance/anomaly-report', methods=['GET'])
+@login_required
+def api_anomaly_report_excel():
+    """匯出出勤異常報告 Excel（缺打卡、遲到、早退）"""
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from io import BytesIO
+    import calendar as _cal
+    from datetime import datetime as _dtx, timedelta as _tdx
+
+    month = request.args.get('month', '') or _dt.now().strftime('%Y-%m')
+    try:
+        y, mo = int(month[:4]), int(month[5:7])
+    except Exception:
+        return jsonify({'error': '月份格式錯誤'}), 400
+
+    TW_OFF = _tdx(hours=8)
+
+    with get_db() as conn:
+        punch_rows = conn.execute("""
+            SELECT ps.id as staff_id, ps.name as staff_name,
+                   ps.department,
+                   (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
+                   MIN(CASE WHEN pr.punch_type='in'  THEN (pr.punched_at AT TIME ZONE 'Asia/Taipei') END) as clock_in,
+                   MAX(CASE WHEN pr.punch_type='out' THEN (pr.punched_at AT TIME ZONE 'Asia/Taipei') END) as clock_out,
+                   BOOL_OR(pr.punch_type='in')  as has_in,
+                   BOOL_OR(pr.punch_type='out') as has_out
+            FROM punch_records pr
+            JOIN punch_staff ps ON ps.id=pr.staff_id AND ps.active=TRUE
+            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            GROUP BY ps.id, ps.name, ps.department,
+                     (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
+            ORDER BY work_date, ps.name
+        """, (month,)).fetchall()
+
+        shift_rows = conn.execute("""
+            SELECT sa.staff_id, sa.shift_date,
+                   st.start_time::text as start_time,
+                   st.end_time::text   as end_time
+            FROM shift_assignments sa
+            JOIN shift_types st ON st.id=sa.shift_type_id
+            WHERE TO_CHAR(sa.shift_date,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+
+        y_int = int(month[:4]); mo_int = int(month[5:7])
+        first_day = f"{y_int}-{mo_int:02d}-01"
+        days_in   = _cal.monthrange(y_int, mo_int)[1]
+        last_day  = f"{y_int}-{mo_int:02d}-{days_in:02d}"
+        leave_rows = conn.execute("""
+            SELECT staff_id, start_date, end_date
+            FROM leave_requests
+            WHERE status='approved'
+              AND start_date <= %s AND end_date >= %s
+        """, (last_day, first_day)).fetchall()
+
+    # Build lookup maps
+    shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
+    leave_set = set()
+    from datetime import date as _dax, timedelta as _tdax
+    for lr in leave_rows:
+        s = lr['start_date']; e = lr['end_date']
+        cur = s
+        while cur <= e:
+            leave_set.add((lr['staff_id'], str(cur)))
+            cur = _dax.fromisoformat(str(cur)) + _tdax(days=1)
+            cur = cur if isinstance(cur, _dax) else cur.date()
+
+    today = _dax.today()
+
+    # Build anomaly rows
+    anomalies = []
+    for r in punch_rows:
+        ds = str(r['work_date'])
+        sid = r['staff_id']
+        shift = shift_map.get((sid, ds))
+
+        anomaly_type = ''; detail = ''
+        late_min = 0; early_min = 0
+
+        if not r['has_in'] and r['has_out']:
+            anomaly_type = '缺上班打卡'; detail = f"僅有下班 {str(r['clock_out'])[11:16]}"
+        elif r['has_in'] and not r['has_out']:
+            if _dax.fromisoformat(ds) < today:
+                anomaly_type = '缺下班打卡'; detail = f"上班 {str(r['clock_in'])[11:16]} 無下班"
+        elif r['has_in'] and r['has_out'] and shift:
+            ci_t = str(r['clock_in'])[11:16]
+            co_t = str(r['clock_out'])[11:16]
+            sh_s = str(shift['start_time'])[:5]
+            sh_e = str(shift['end_time'])[:5]
+            try:
+                ci_m = int(ci_t[:2])*60 + int(ci_t[3:5])
+                sh_s_m = int(sh_s[:2])*60 + int(sh_s[3:5])
+                if ci_m - sh_s_m > 10:
+                    late_min = ci_m - sh_s_m
+                    anomaly_type = '遲到'; detail = f"應 {sh_s}，實際 {ci_t}（+{late_min}分）"
+            except Exception:
+                pass
+            if not anomaly_type:
+                try:
+                    co_m = int(co_t[:2])*60 + int(co_t[3:5])
+                    sh_e_m = int(sh_e[:2])*60 + int(sh_e[3:5])
+                    if sh_e_m - co_m > 15:
+                        early_min = sh_e_m - co_m
+                        anomaly_type = '早退'; detail = f"應 {sh_e}，實際 {co_t}（-{early_min}分）"
+                except Exception:
+                    pass
+
+        if anomaly_type:
+            anomalies.append({
+                'staff_name':  r['staff_name'],
+                'department':  r['department'] or '',
+                'date':        ds,
+                'shift_start': str(shift['start_time'])[:5] if shift else '—',
+                'shift_end':   str(shift['end_time'])[:5]   if shift else '—',
+                'clock_in':    str(r['clock_in'])[11:16]  if r['clock_in']  else '—',
+                'clock_out':   str(r['clock_out'])[11:16] if r['clock_out'] else '—',
+                'anomaly_type': anomaly_type,
+                'detail':       detail,
+            })
+
+    # Build Excel
+    wb   = openpyxl.Workbook()
+    ws   = wb.active
+    ws.title = f'{month} 異常明細'
+
+    thin = Border(
+        left=Side(style='thin', color='DDDDDD'), right=Side(style='thin', color='DDDDDD'),
+        top=Side(style='thin',  color='DDDDDD'), bottom=Side(style='thin', color='DDDDDD'),
+    )
+    header_fill   = PatternFill('solid', fgColor='0F1C3A')
+    warn_fill     = PatternFill('solid', fgColor='FFF3CD')
+    err_fill      = PatternFill('solid', fgColor='FDECEA')
+    center_align  = Alignment(horizontal='center', vertical='center')
+
+    headers = ['員工姓名','部門','日期','應上班','應下班','實際上班','實際下班','異常類型','說明']
+    col_w   = [12, 10, 12, 8, 8, 8, 8, 12, 30]
+    for ci, (h, w) in enumerate(zip(headers, col_w), 1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font      = Font(bold=True, color='FFFFFF', name='Noto Sans TC', size=11)
+        cell.fill      = header_fill
+        cell.alignment = center_align
+        cell.border    = thin
+        ws.column_dimensions[ws.cell(row=1, column=ci).column_letter].width = w
+
+    for ri, a in enumerate(anomalies, 2):
+        row_fill = err_fill if a['anomaly_type'] in ('缺上班打卡','缺下班打卡') else warn_fill
+        vals = [a['staff_name'], a['department'], a['date'],
+                a['shift_start'], a['shift_end'],
+                a['clock_in'], a['clock_out'],
+                a['anomaly_type'], a['detail']]
+        for ci, v in enumerate(vals, 1):
+            cell = ws.cell(row=ri, column=ci, value=v)
+            cell.fill      = row_fill
+            cell.alignment = center_align if ci != 9 else Alignment(vertical='center')
+            cell.border    = thin
+
+    ws.row_dimensions[1].height = 22
+    ws.freeze_panes = 'A2'
+
+    # Summary sheet
+    ws2 = wb.create_sheet('摘要')
+    ws2.append(['統計', '數量'])
+    ws2.append(['異常總筆數', len(anomalies)])
+    by_type = {}
+    for a in anomalies:
+        by_type[a['anomaly_type']] = by_type.get(a['anomaly_type'], 0) + 1
+    for t, c in sorted(by_type.items(), key=lambda x: -x[1]):
+        ws2.append([t, c])
+
+    buf = BytesIO()
+    wb.save(buf); buf.seek(0)
+    from flask import Response as _FR
+    return _FR(
+        buf.read(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename=anomaly_{month}.xlsx'}
+    )
+
+
 @app.route('/api/export/salary', methods=['GET'])
 @login_required
 def api_export_salary():
@@ -5202,6 +5396,350 @@ def api_dashboard():
         'daily_attendance':    daily_attendance,
         'leave_distribution':  leave_distribution,
         'ot_ranking':          ot_ranking,
+    })
+
+
+# ── Dashboard 擴充 API ────────────────────────────────────────────────────────
+
+@app.route('/api/dashboard/labor-cost', methods=['GET'])
+@login_required
+def api_dashboard_labor_cost():
+    """近 12 個月人事費用趨勢"""
+    from datetime import date as _dlc
+    today = _dlc.today()
+    months = []
+    for i in range(11, -1, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0: m += 12; y -= 1
+        months.append(f'{y}-{m:02d}')
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT month, COALESCE(SUM(net_pay),0) as total
+            FROM salary_records
+            WHERE month = ANY(%s)
+            GROUP BY month
+        """, (months,)).fetchall()
+    cost_map = {r['month']: float(r['total']) for r in rows}
+    return jsonify({
+        'months':     months,
+        'labor_cost': [cost_map.get(m, 0) for m in months],
+    })
+
+
+@app.route('/api/dashboard/attendance-heatmap', methods=['GET'])
+@login_required
+def api_dashboard_attendance_heatmap():
+    """本月每日出勤率（熱力圖資料）"""
+    from datetime import date as _dah
+    import calendar as _calh
+    month = request.args.get('month', '') or _dah.today().strftime('%Y-%m')
+    y, mo = int(month[:4]), int(month[5:7])
+    days_in = _calh.monthrange(y, mo)[1]
+
+    with get_db() as conn:
+        total_staff = conn.execute(
+            "SELECT COUNT(*) as c FROM punch_staff WHERE active=TRUE"
+        ).fetchone()['c']
+
+        punch_rows = conn.execute("""
+            SELECT (punched_at AT TIME ZONE 'Asia/Taipei')::date as d,
+                   COUNT(DISTINCT staff_id) as cnt
+            FROM punch_records
+            WHERE punch_type='in'
+              AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+            GROUP BY d
+        """, (month,)).fetchall()
+
+        leave_rows = conn.execute("""
+            SELECT lr.start_date, lr.end_date, COUNT(*) as cnt
+            FROM leave_requests lr
+            WHERE lr.status='approved'
+              AND TO_CHAR(lr.start_date,'YYYY-MM')=%s OR TO_CHAR(lr.end_date,'YYYY-MM')=%s
+            GROUP BY lr.start_date, lr.end_date
+        """, (month, month)).fetchall()
+
+    punch_map = {str(r['d']): int(r['cnt']) for r in punch_rows}
+
+    from datetime import date as _dah2, timedelta as _tdah
+    leave_map = {}
+    for lr in leave_rows:
+        s = _dah2.fromisoformat(str(lr['start_date']))
+        e = _dah2.fromisoformat(str(lr['end_date']))
+        cur = s
+        while cur <= e:
+            ds = str(cur)
+            if ds.startswith(month):
+                leave_map[ds] = leave_map.get(ds, 0) + 1
+            cur += _tdah(days=1)
+
+    days = []
+    for d in range(1, days_in + 1):
+        ds = f'{y}-{mo:02d}-{d:02d}'
+        cnt = punch_map.get(ds, 0)
+        rate = round(cnt / total_staff, 3) if total_staff > 0 else 0
+        days.append({
+            'date': ds,
+            'day_of_week': _dah2(y, mo, d).weekday(),
+            'count': cnt,
+            'attendance_rate': rate,
+            'on_leave': leave_map.get(ds, 0),
+        })
+
+    return jsonify({'month': month, 'total_staff': total_staff, 'days': days})
+
+
+@app.route('/api/dashboard/leave-distribution', methods=['GET'])
+@login_required
+def api_dashboard_leave_distribution():
+    """本年度請假類型分佈"""
+    from datetime import date as _dld
+    year = request.args.get('year', str(_dld.today().year))
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT lt.name, lt.color,
+                   COUNT(*) as cnt,
+                   COALESCE(SUM(lr.days), 0) as days
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id=lr.leave_type_id
+            WHERE lr.status='approved'
+              AND EXTRACT(YEAR FROM lr.start_date)=%s
+            GROUP BY lt.name, lt.color
+            ORDER BY days DESC
+        """, (int(year),)).fetchall()
+    total = sum(float(r['days']) for r in rows)
+    return jsonify({
+        'year': year,
+        'total_leave_days': total,
+        'breakdown': [{
+            'name':  r['name'],
+            'color': r['color'] or '#4a7bda',
+            'days':  float(r['days']),
+            'count': int(r['cnt']),
+            'pct':   round(float(r['days']) / total * 100, 1) if total > 0 else 0,
+        } for r in rows],
+    })
+
+
+# ── 排班需求 & 自動排班 ──────────────────────────────────────────────────────
+
+@app.route('/api/shifts/staffing-requirements', methods=['GET'])
+@login_required
+def api_staffing_req_get():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT r.id, r.shift_type_id, r.day_of_week, r.required_count,
+                   st.name as shift_name, st.color as shift_color
+            FROM shift_staffing_requirements r
+            JOIN shift_types st ON st.id=r.shift_type_id
+            ORDER BY st.sort_order, r.day_of_week
+        """).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/shifts/staffing-requirements', methods=['PUT'])
+@login_required
+def api_staffing_req_put():
+    items = request.get_json(force=True)
+    if not isinstance(items, list):
+        return jsonify({'error': '格式錯誤'}), 400
+    count = 0
+    with get_db() as conn:
+        for it in items:
+            stid = int(it.get('shift_type_id', 0))
+            dow  = int(it.get('day_of_week', 0))
+            req  = max(0, int(it.get('required_count', 1)))
+            if req == 0:
+                conn.execute(
+                    "DELETE FROM shift_staffing_requirements WHERE shift_type_id=%s AND day_of_week=%s",
+                    (stid, dow))
+            else:
+                conn.execute("""
+                    INSERT INTO shift_staffing_requirements (shift_type_id, day_of_week, required_count, updated_at)
+                    VALUES (%s,%s,%s,NOW())
+                    ON CONFLICT (shift_type_id, day_of_week)
+                    DO UPDATE SET required_count=EXCLUDED.required_count, updated_at=NOW()
+                """, (stid, dow, req))
+            count += 1
+    return jsonify({'ok': True, 'upserted': count})
+
+
+@app.route('/api/schedule/auto-generate', methods=['POST'])
+@login_required
+def api_auto_generate_schedule():
+    """自動排班引擎：依人力需求與員工可用性生成班表建議"""
+    from datetime import date as _dag, timedelta as _tdag
+    import calendar as _calag
+
+    b        = request.get_json(force=True)
+    month    = (b.get('month') or '').strip()
+    overwrite = bool(b.get('overwrite', False))
+    if not month:
+        month = _dag.today().strftime('%Y-%m')
+    try:
+        y, mo = int(month[:4]), int(month[5:7])
+    except Exception:
+        return jsonify({'error': '月份格式錯誤'}), 400
+
+    days_in   = _calag.monthrange(y, mo)[1]
+    all_dates = [_dag(y, mo, d) for d in range(1, days_in + 1)]
+
+    with get_db() as conn:
+        shift_types = conn.execute(
+            "SELECT * FROM shift_types WHERE active=TRUE ORDER BY sort_order"
+        ).fetchall()
+        requirements = conn.execute("""
+            SELECT shift_type_id, day_of_week, required_count
+            FROM shift_staffing_requirements
+        """).fetchall()
+        staff_list = conn.execute(
+            "SELECT id, name FROM punch_staff WHERE active=TRUE ORDER BY name"
+        ).fetchall()
+
+        # 本月已核准休假日期（per staff）
+        leave_rows = conn.execute("""
+            SELECT staff_id, start_date, end_date
+            FROM leave_requests
+            WHERE status='approved'
+              AND start_date <= %s AND end_date >= %s
+        """, (f'{y}-{mo:02d}-{days_in:02d}', f'{y}-{mo:02d}-01')).fetchall()
+
+        # 已核准排休
+        sched_rows = conn.execute("""
+            SELECT staff_id, requested_dates
+            FROM schedule_requests
+            WHERE status='approved'
+              AND to_char(created_at,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+
+        # 現有班表
+        existing = conn.execute("""
+            SELECT staff_id, shift_date FROM shift_assignments
+            WHERE TO_CHAR(shift_date,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+
+    # 建立不可上班日 set: {(staff_id, date_str)}
+    off_days = set()
+    for lr in leave_rows:
+        s = _dag.fromisoformat(str(lr['start_date']))
+        e = _dag.fromisoformat(str(lr['end_date']))
+        cur = s
+        while cur <= e:
+            off_days.add((lr['staff_id'], str(cur)))
+            cur += _tdag(days=1)
+    for sr in sched_rows:
+        rdates = sr['requested_dates']
+        if isinstance(rdates, str):
+            try: rdates = _json.loads(rdates)
+            except: rdates = []
+        for ds in (rdates or []):
+            off_days.add((sr['staff_id'], ds))
+
+    # 已有班表 set（不 overwrite 時跳過）
+    existing_set = {(r['staff_id'], str(r['shift_date'])) for r in existing}
+
+    # 需求 map: {(shift_type_id, day_of_week): required_count}
+    req_map = {(r['shift_type_id'], r['day_of_week']): r['required_count'] for r in requirements}
+
+    # 排班計數器（避免連續超時）
+    assigned_days  = {s['id']: [] for s in staff_list}  # staff_id -> [date]
+    assignments    = []
+    conflicts      = []
+    staff_ids      = [s['id'] for s in staff_list]
+    staff_name_map = {s['id']: s['name'] for s in staff_list}
+
+    for date in all_dates:
+        dow = date.weekday()  # 0=Mon, 6=Sun
+        ds  = str(date)
+
+        for st in shift_types:
+            stid     = st['id']
+            needed   = req_map.get((stid, dow), 0)
+            if needed <= 0:
+                continue
+
+            # 可用員工：未請假、未排休
+            available = [
+                sid for sid in staff_ids
+                if (sid, ds) not in off_days
+            ]
+
+            # 排除已被指派在其他班（同日）
+            already_today = {a['staff_id'] for a in assignments if a['shift_date'] == ds}
+            available = [sid for sid in available if sid not in already_today]
+
+            # 排除連續 7 天（含本日）的員工
+            def consecutive_days(sid, d):
+                days = sorted(assigned_days[sid])
+                streak = 0
+                check = d
+                while check in days:
+                    streak += 1
+                    check = str(_dag.fromisoformat(check) - _tdag(days=1))
+                return streak
+
+            available_ok = [sid for sid in available if consecutive_days(sid, ds) < 6]
+
+            # 按本月已排天數升序（均衡分配）
+            available_ok.sort(key=lambda sid: len(assigned_days[sid]))
+
+            assigned_count = 0
+            for sid in available_ok:
+                if assigned_count >= needed:
+                    break
+                if not overwrite and (sid, ds) in existing_set:
+                    assigned_count += 1
+                    continue
+                assignments.append({
+                    'staff_id':     sid,
+                    'staff_name':   staff_name_map[sid],
+                    'shift_type_id': stid,
+                    'shift_name':   st['name'],
+                    'shift_date':   ds,
+                })
+                assigned_days[sid].append(ds)
+                assigned_count += 1
+
+            if assigned_count < needed:
+                conflicts.append({
+                    'type':   'understaffed',
+                    'date':   ds,
+                    'shift':  st['name'],
+                    'detail': f'{ds} {st["name"]} 需要 {needed} 人，僅能排 {assigned_count} 人',
+                })
+
+    # 寫入資料庫
+    inserted = 0
+    if assignments:
+        with get_db() as conn:
+            for a in assignments:
+                try:
+                    if overwrite:
+                        conn.execute("""
+                            INSERT INTO shift_assignments (staff_id, shift_type_id, shift_date)
+                            VALUES (%s,%s,%s)
+                            ON CONFLICT (staff_id, shift_date) DO UPDATE
+                            SET shift_type_id=EXCLUDED.shift_type_id
+                        """, (a['staff_id'], a['shift_type_id'], a['shift_date']))
+                    else:
+                        conn.execute("""
+                            INSERT INTO shift_assignments (staff_id, shift_type_id, shift_date)
+                            VALUES (%s,%s,%s)
+                            ON CONFLICT DO NOTHING
+                        """, (a['staff_id'], a['shift_type_id'], a['shift_date']))
+                    inserted += 1
+                except Exception:
+                    pass
+
+    return jsonify({
+        'ok':          True,
+        'month':       month,
+        'assignments': assignments,
+        'conflicts':   conflicts,
+        'summary': {
+            'assigned':       inserted,
+            'conflict_count': len(conflicts),
+        },
     })
 
 
@@ -8294,6 +8832,52 @@ def _line_query_monthly_records(staff, user_id, text):
             _send_line_punch(user_id, '\n'.join(chunk))
 
 
+def _line_submit_overtime(staff, user_id, text):
+    """
+    LINE 加班申請。格式：申請加班 [YYYY-MM-DD] [時數] [原因]
+    範例：申請加班 2026-04-05 3 業績衝刺
+    """
+    import re as _re_ot
+    from datetime import date as _dot
+    parts = text.strip().split(None, 3)
+    if len(parts) < 3:
+        _send_line_punch(user_id,
+            '加班申請格式：\n申請加班 [日期] [時數] [原因]\n\n'
+            '範例：申請加班 2026-04-05 3 業績衝刺\n'
+            '（時數可用小數，如 1.5）')
+        return
+    date_str = parts[1]
+    try:
+        _dot.fromisoformat(date_str)
+    except ValueError:
+        _send_line_punch(user_id, f'日期格式錯誤，請使用 YYYY-MM-DD，例：{_dot.today().isoformat()}')
+        return
+    try:
+        hours = float(parts[2])
+        if hours <= 0 or hours > 24:
+            raise ValueError
+    except ValueError:
+        _send_line_punch(user_id, '加班時數需為 0.5～24 之間的數字')
+        return
+    reason = parts[3].strip() if len(parts) > 3 else '（LINE 加班申請）'
+
+    with get_db() as conn:
+        row = conn.execute("""
+            INSERT INTO overtime_requests
+              (staff_id, request_date, start_time, end_time, ot_hours, reason, status)
+            VALUES (%s, %s, NULL, NULL, %s, %s, 'pending')
+            RETURNING id
+        """, (staff['id'], date_str, hours, reason)).fetchone()
+
+    _send_line_punch(user_id,
+        f'✅ 加班申請已送出\n\n'
+        f'日期：{date_str}\n'
+        f'時數：{hours} 小時\n'
+        f'原因：{reason}\n'
+        f'申請編號：#{row["id"]}\n\n'
+        '請等候管理員審核，審核結果將通知您。')
+
+
 def _line_show_help(staff, user_id):
     _send_line_punch(user_id,
         f'哈囉 {staff["name"]}！以下是可用的指令：\n\n'
@@ -8310,6 +8894,8 @@ def _line_show_help(staff, user_id):
         '─── 申請 ───\n'
         '📝 請假 [假別] [日期] → 送出請假\n'
         '   範例：請假 特休 2026-04-01\n'
+        '⏰ 申請加班 [日期] [時數] → 加班申請\n'
+        '   範例：申請加班 2026-04-05 3\n'
         '🗂️ 假別 → 查看可用假別清單\n\n'
         '─── 其他 ───\n'
         '🔓 解除綁定')

@@ -368,6 +368,33 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       </div>
     </div>
 
+    <!-- 近 12 月人事費用趨勢 + 年度請假類型 -->
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:20px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">近 12 個月人事費用趨勢</span></div>
+        <div style="padding:16px 20px"><canvas id="chart-labor-cost" height="180"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">年度請假類型分佈</span>
+          <span id="ds-annual-year-label" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div style="padding:16px 20px;display:flex;align-items:center;gap:20px">
+          <div style="flex-shrink:0"><canvas id="chart-annual-leave-pie" width="160" height="160"></canvas></div>
+          <div id="ds-annual-leave-legend" style="flex:1;font-size:12px;display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 本月出勤熱力圖 -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <span class="card-title">本月出勤率熱力圖</span>
+        <span id="ds-heatmap-label" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="attendance-heatmap-wrap" style="padding:16px 20px"></div>
+    </div>
+
   </div><!-- end page-dash -->
 
   <!-- ── 打卡管理 ── -->
@@ -633,9 +660,12 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     </div>
     <!-- 異常告警 -->
     <div id="punch-panel-anomaly" style="display:none">
-      <div class="filter-bar" style="margin-bottom:16px;gap:12px">
+      <div class="filter-bar" style="margin-bottom:16px;gap:12px;flex-wrap:wrap">
         <span style="font-size:13px;color:var(--muted)">自動偵測近 7 天出勤異常（遲到、早退、缺打卡、今日未出勤）</span>
         <span style="flex:1"></span>
+        <span class="filter-label">月份</span>
+        <input class="filter-input" type="month" id="anomaly-export-month" style="width:140px">
+        <button class="btn btn-outline btn-sm" onclick="exportAnomalyExcel()">匯出 Excel</button>
         <button class="btn btn-outline btn-sm" onclick="loadPunchAnomalies()">重新整理</button>
       </div>
       <div class="card">
@@ -690,6 +720,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <button class="inv-tab"        id="schedtab-summary"    onclick="switchSchedTab('summary')">人員摘要</button>
       <button class="inv-tab"        id="schedtab-conflicts"  onclick="switchSchedTab('conflicts')" style="position:relative">衝突警示<span id="conflicts-badge" style="display:none;position:absolute;top:4px;right:4px;background:var(--red);color:#fff;border-radius:8px;padding:0 5px;font-size:10px;font-weight:700;line-height:16px"></span></button>
       <button class="inv-tab"        id="schedtab-config"     onclick="switchSchedTab('config')">月份設定</button>
+      <button class="inv-tab"        id="schedtab-autogen"    onclick="switchSchedTab('autogen')">自動排班</button>
     </div>
 
     <!-- 班別排班 -->
@@ -795,6 +826,40 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         </div>
       </div>
     </div>
+    <!-- 自動排班 -->
+    <div id="sched-panel-autogen" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+
+        <!-- 人力需求設定 -->
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="padding:0;margin-bottom:4px">各班每日人力需求</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">設定每個班別在各星期幾需要多少人（0 = 不需要）</div>
+          <div id="requirements-grid" style="overflow-x:auto"></div>
+          <div style="margin-top:14px;display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="saveStaffingRequirements()">儲存需求</button>
+            <button class="btn btn-outline btn-sm" onclick="loadStaffingRequirements()">重新整理</button>
+          </div>
+          <div id="req-msg" style="font-size:12px;color:var(--green);margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <!-- 自動產生控制 -->
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="padding:0;margin-bottom:14px">產生班表建議</div>
+          <div style="margin-bottom:12px">
+            <label class="form-label">排班月份</label>
+            <input type="month" id="autogen-month" class="form-input" style="width:100%">
+          </div>
+          <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="autogen-overwrite" style="width:16px;height:16px">
+            <label for="autogen-overwrite" style="font-size:13px;cursor:pointer">覆蓋現有班表（相同員工相同日期）</label>
+          </div>
+          <button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="runAutoGenerate()">🔄 產生班表建議</button>
+          <div id="autogen-summary" style="display:none;background:var(--bg);border-radius:6px;padding:12px;font-size:13px;margin-bottom:10px"></div>
+          <div id="autogen-conflicts" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
   </div><!-- end page-sched -->
 
 
@@ -2831,6 +2896,9 @@ async function initDash() {
   renderDashTodayPie(data.today_summary, isCurrentMonth);
   renderDashLeavePie(data.leave_distribution || []);
   renderDashOTBar(data.ot_ranking || []);
+  renderLaborCostChart();
+  renderAttendanceHeatmap(month);
+  renderAnnualLeavePie();
 }
 
 function resetDashMonth() {
@@ -4004,14 +4072,14 @@ let shiftEditTypeId = null, samSelectedDates = new Set(), samSelectedStaff = new
 function initSched() {
   const now = new Date();
   const ym  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  ['sched-cal-month','sched-req-month','sched-sum-month','cfg-month','shift-month','sam-month'].forEach(id => {
+  ['sched-cal-month','sched-req-month','sched-sum-month','cfg-month','shift-month','sam-month','autogen-month'].forEach(id => {
     const el = document.getElementById(id); if (el && !el.value) el.value = ym;
   });
   switchSchedTab('shift');
 }
 
 function switchSchedTab(tab) {
-  ['shift','shifttypes','calendar','requests','summary','conflicts','config'].forEach(t => {
+  ['shift','shifttypes','calendar','requests','summary','conflicts','config','autogen'].forEach(t => {
     document.getElementById('schedtab-' + t).classList.toggle('active', t === tab);
     document.getElementById('sched-panel-' + t).style.display = t === tab ? '' : 'none';
   });
@@ -4028,6 +4096,7 @@ function switchSchedTab(tab) {
     loadShiftConflicts();
   }
   if (tab === 'config')     loadSchedConfig();
+  if (tab === 'autogen')    loadStaffingRequirements();
 }
 
 // ── 月曆總覽 ─────────────────────────────────────────────────
@@ -8192,6 +8261,276 @@ async function savePerfConfig() {
   _perfConfig = res.data;
   showToast('評級設定已儲存', 'success');
   renderPerfConfigGrades(_perfConfig.grades || []);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Dashboard 擴充：人事費用趨勢、出勤熱力圖、年度請假分佈
+// ══════════════════════════════════════════════════════════════════
+
+async function renderLaborCostChart() {
+  const { ok, data } = await api('/api/dashboard/labor-cost', {}, true);
+  if (!ok) return;
+  _destroyChart('labor-cost');
+  const ctx = document.getElementById('chart-labor-cost');
+  if (!ctx) return;
+  const maxVal = Math.max(...data.labor_cost, 1);
+  _dashCharts['labor-cost'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: data.months.map(m => m.slice(5)),
+      datasets: [{
+        label: '人事費用',
+        data: data.labor_cost,
+        borderColor: '#4a7bda',
+        backgroundColor: 'rgba(74,123,218,0.08)',
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `NT$ ${Number(c.parsed.y).toLocaleString()}` } }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { callback: v => `$${(v/1000).toFixed(0)}K`, font: { size: 10 } },
+          grid: { color: 'rgba(0,0,0,0.05)' }
+        },
+        x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+async function renderAttendanceHeatmap(month) {
+  const wrap = document.getElementById('attendance-heatmap-wrap');
+  const label = document.getElementById('ds-heatmap-label');
+  if (!wrap) return;
+  const m = month || (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const { ok, data } = await api(`/api/dashboard/attendance-heatmap?month=${m}`, {}, true);
+  if (!ok) { wrap.innerHTML = '<div style="color:var(--muted);font-size:12px">載入失敗</div>'; return; }
+  if (label) label.textContent = `${m}（${data.total_staff} 人）`;
+
+  const WDAY = ['一','二','三','四','五','六','日'];
+  const cellStyle = (rate) => {
+    const g = Math.round(46 + rate * 120);
+    const b = Math.round(58 + rate * 100);
+    const opacity = 0.15 + rate * 0.75;
+    return `background:rgba(46,158,107,${opacity.toFixed(2)})`;
+  };
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px">`;
+  WDAY.forEach(d => { html += `<div style="text-align:center;font-size:11px;color:var(--muted);font-weight:600">${d}</div>`; });
+  html += '</div>';
+
+  // Pad first week
+  const firstDow = data.days[0] ? data.days[0].day_of_week : 0;
+  html += `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">`;
+  for (let p = 0; p < firstDow; p++) html += '<div></div>';
+
+  data.days.forEach(day => {
+    const pct = Math.round(day.attendance_rate * 100);
+    const dateShort = day.date.slice(8);
+    html += `<div title="${day.date} 出勤 ${day.count}/${data.total_staff}（${pct}%）"
+      style="${cellStyle(day.attendance_rate)};border-radius:5px;padding:6px 4px;text-align:center;cursor:default;border:1px solid rgba(0,0,0,0.06)">
+      <div style="font-size:12px;font-weight:600;color:var(--text)">${dateShort}</div>
+      <div style="font-size:10px;color:var(--muted)">${pct}%</div>
+    </div>`;
+    // End of week: no action needed, CSS grid handles it
+  });
+  html += '</div>';
+
+  // Legend
+  html += `<div style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--muted)">
+    <span>低出勤</span>`;
+  [0, 0.25, 0.5, 0.75, 1].forEach(r => {
+    html += `<div style="${cellStyle(r)};width:20px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,0.08)"></div>`;
+  });
+  html += `<span>全勤</span></div>`;
+
+  wrap.innerHTML = html;
+}
+
+async function renderAnnualLeavePie() {
+  const { ok, data } = await api('/api/dashboard/leave-distribution', {}, true);
+  if (!ok) return;
+  _destroyChart('annual-leave-pie');
+  const ctx = document.getElementById('chart-annual-leave-pie');
+  const legend = document.getElementById('ds-annual-leave-legend');
+  const yearLabel = document.getElementById('ds-annual-year-label');
+  if (!ctx) return;
+  if (yearLabel) yearLabel.textContent = `${data.year} 年`;
+
+  if (!data.breakdown.length) {
+    if (legend) legend.innerHTML = '<div style="color:var(--muted);font-size:12px">本年尚無請假記錄</div>';
+    _dashCharts['annual-leave-pie'] = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels: ['無資料'], datasets: [{ data: [1], backgroundColor: ['#f0f2f8'], borderWidth: 0 }] },
+      options: { responsive: false, cutout: '68%', plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+    });
+    return;
+  }
+
+  _dashCharts['annual-leave-pie'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: data.breakdown.map(d => d.name),
+      datasets: [{ data: data.breakdown.map(d => d.days), backgroundColor: data.breakdown.map(d => d.color || '#4a7bda'), borderWidth: 2, borderColor: '#fff' }]
+    },
+    options: { responsive: false, cutout: '60%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.label}：${c.parsed} 天` } } } }
+  });
+
+  if (legend) {
+    legend.innerHTML = data.breakdown.map(d =>
+      `<div style="display:flex;align-items:center;gap:8px">
+        <div style="width:9px;height:9px;border-radius:50%;background:${d.color||'#4a7bda'};flex-shrink:0"></div>
+        <span style="flex:1;color:var(--muted);font-size:11px">${escHtml(d.name)}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:11px">${d.days}天</span>
+        <span style="font-size:10px;color:var(--muted)">${d.pct}%</span>
+      </div>`
+    ).join('');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 出勤異常報告 Excel 匯出
+// ══════════════════════════════════════════════════════════════════
+
+function exportAnomalyExcel() {
+  const now = new Date();
+  const defaultM = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const month = document.getElementById('anomaly-export-month')?.value || defaultM;
+  window.open(`/api/attendance/anomaly-report?month=${month}`);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 自動排班引擎
+// ══════════════════════════════════════════════════════════════════
+
+let _shiftTypesCache = [];
+let _staffingReqs   = [];
+const WDAY_LABELS = ['一','二','三','四','五','六','日'];
+
+async function loadStaffingRequirements() {
+  // 確保班別清單已載入
+  if (!_shiftTypesCache.length) {
+    const dt = await api('/api/shifts/types', {}, true);
+    if (dt.ok) _shiftTypesCache = Array.isArray(dt.data) ? dt.data : [];
+  }
+  const dr = await api('/api/shifts/staffing-requirements', {}, true);
+  if (!dr.ok) return;
+  _staffingReqs = Array.isArray(dr.data) ? dr.data : [];
+
+  // 設定預設月份
+  const ag = document.getElementById('autogen-month');
+  if (ag && !ag.value) {
+    const now = new Date();
+    ag.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  }
+
+  renderRequirementsGrid();
+}
+
+function renderRequirementsGrid() {
+  const container = document.getElementById('requirements-grid');
+  if (!container) return;
+  const shifts = _shiftTypesCache.filter(s => s.active !== false);
+  if (!shifts.length) {
+    container.innerHTML = '<div style="color:var(--muted);font-size:12px">請先至「班別設定」新增班別</div>';
+    return;
+  }
+
+  // Build req lookup: {shift_type_id: {dow: count}}
+  const reqMap = {};
+  _staffingReqs.forEach(r => {
+    if (!reqMap[r.shift_type_id]) reqMap[r.shift_type_id] = {};
+    reqMap[r.shift_type_id][r.day_of_week] = r.required_count;
+  });
+
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="padding:6px 8px;text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border)">班別</th>`;
+  WDAY_LABELS.forEach(d => {
+    html += `<th style="padding:6px 4px;text-align:center;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);min-width:44px">${d}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  shifts.forEach(st => {
+    html += `<tr>
+      <td style="padding:6px 8px;white-space:nowrap">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${st.color||'#ccc'};margin-right:5px"></span>
+        ${escHtml(st.name)}
+      </td>`;
+    for (let dow = 0; dow < 7; dow++) {
+      const val = (reqMap[st.id] && reqMap[st.id][dow]) || 0;
+      html += `<td style="padding:4px">
+        <input type="number" min="0" max="50" value="${val}"
+          data-stid="${st.id}" data-dow="${dow}"
+          class="req-input form-input"
+          style="width:44px;text-align:center;padding:4px 2px;font-size:12px">
+      </td>`;
+    }
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+async function saveStaffingRequirements() {
+  const inputs = document.querySelectorAll('.req-input');
+  const items = [...inputs].map(el => ({
+    shift_type_id: parseInt(el.dataset.stid),
+    day_of_week:   parseInt(el.dataset.dow),
+    required_count: parseInt(el.value) || 0,
+  }));
+  const res = await api('/api/shifts/staffing-requirements', apiJSON(items));
+  const msg = document.getElementById('req-msg');
+  if (res.ok) {
+    if (msg) { msg.textContent = `✓ 已儲存 ${res.data?.upserted || ''} 筆需求`; setTimeout(() => { msg.textContent = ''; }, 3000); }
+  } else {
+    if (msg) msg.textContent = '儲存失敗';
+  }
+}
+
+async function runAutoGenerate() {
+  const month    = document.getElementById('autogen-month')?.value;
+  const overwrite = document.getElementById('autogen-overwrite')?.checked;
+  if (!month) { showToast('請選擇排班月份', 'error'); return; }
+
+  const sumEl  = document.getElementById('autogen-summary');
+  const confEl = document.getElementById('autogen-conflicts');
+  sumEl.style.display = 'none';
+  confEl.style.display = 'none';
+
+  const res = await api('/api/schedule/auto-generate', apiJSON({ month, overwrite }));
+  if (!res.ok) { showToast('排班失敗：' + (res.error || ''), 'error'); return; }
+
+  const d = res.data;
+  sumEl.style.display = '';
+  sumEl.innerHTML = `
+    <div style="display:flex;gap:20px;flex-wrap:wrap">
+      <div><span style="font-size:20px;font-weight:700;color:var(--green)">${d.summary.assigned}</span><div style="font-size:11px;color:var(--muted)">已排班筆數</div></div>
+      <div><span style="font-size:20px;font-weight:700;color:${d.summary.conflict_count > 0 ? 'var(--red)' : 'var(--muted)'}">${d.summary.conflict_count}</span><div style="font-size:11px;color:var(--muted)">人力不足警示</div></div>
+    </div>`;
+
+  if (d.conflicts.length) {
+    confEl.style.display = '';
+    confEl.innerHTML = `<div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:8px">⚠️ 人力不足警示（${d.conflicts.length} 筆）</div>` +
+      d.conflicts.map(c => `<div style="background:var(--red-light);border-radius:6px;padding:8px 12px;margin-bottom:4px;font-size:12px">${escHtml(c.detail)}</div>`).join('');
+  }
+
+  showToast(`班表已產生，共 ${d.summary.assigned} 筆`, 'success');
+  // 切換到班別排班頁面顯示結果
+  setTimeout(() => {
+    const shiftM = document.getElementById('shift-month');
+    if (shiftM) shiftM.value = month;
+    switchSchedTab('shift');
+  }, 1500);
 }
 </script>
 </html>
