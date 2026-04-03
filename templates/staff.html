@@ -1463,6 +1463,7 @@ async function initLeaveTab() {
   ).join('');
   sel.addEventListener('change', updateLeaveTypeInfo);
   updateLeaveTypeInfo();
+  _onLeaveTypeChange();
   // 設定預設日期為今天
   const today = new Date().toISOString().slice(0, 10);
   if (!document.getElementById('leave-start').value) {
@@ -1865,6 +1866,7 @@ function renderMyLeaveList() {
       <div style="padding:8px 14px;font-size:12px;color:var(--muted)">
         原因：${esc(r.reason || '')}
         ${r.substitute_name ? `　代理人：${esc(r.substitute_name)}` : ''}
+        ${r.document_id ? `<a href="/api/documents/${r.document_id}/image" target="_blank" style="margin-left:8px;color:var(--accent);font-size:11px;text-decoration:none">🏥 查看病單</a>` : ''}
         ${r.review_note ? `<div style="color:${sc};margin-top:4px">審核意見：${esc(r.review_note)}</div>` : ''}
       </div>
     </div>`;
