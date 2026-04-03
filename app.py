@@ -8810,24 +8810,23 @@ def api_leave_upload_cert():
 
 @app.route('/api/documents/<int:doc_id>/image', methods=['GET'])
 def api_document_image(doc_id):
-    """Return the stored image as a redirect to data URL (for admin/employee viewing)."""
-    # Admin or staff can view
+    """Return a simple HTML page embedding the stored image as a data URL."""
     if not (session.get('logged_in') or session.get('punch_staff_id')):
         return jsonify({'error': 'unauthorized'}), 401
     with get_db() as conn:
         doc = conn.execute("SELECT image_data, filename FROM finance_documents WHERE id=%s", (doc_id,)).fetchone()
     if not doc or not doc['image_data']:
         return jsonify({'error': '找不到圖片'}), 404
-    # image_data is "data:image/jpeg;base64,..."
-    import base64 as _b64v, re as _rev
-    m = _rev.match(r'data:([^;]+);base64,(.+)', doc['image_data'])
-    if not m:
-        return jsonify({'error': '圖片格式錯誤'}), 400
-    content_type, b64 = m.group(1), m.group(2)
-    raw = _b64v.b64decode(b64)
     from flask import Response
-    return Response(raw, mimetype=content_type,
-                    headers={'Content-Disposition': f'inline; filename="{doc["filename"]}"'})
+    fname = (doc['filename'] or '').replace('"', '')
+    html = (
+        '<!doctype html><html><head><meta charset="utf-8">'
+        f'<title>{fname}</title>'
+        '<style>body{margin:0;background:#111;display:flex;justify-content:center;align-items:flex-start}'
+        'img{max-width:100%;height:auto}</style></head>'
+        f'<body><img src="{doc["image_data"]}" alt="{fname}"></body></html>'
+    )
+    return Response(html, mimetype='text/html')
 
 
 # ── Admin endpoints ─────────────────────────────────────────────

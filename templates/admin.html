@@ -2323,7 +2323,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <input type="hidden" id="lrm-id">
       <div id="lrm-info" style="padding:12px;background:var(--bg);border-radius:8px;margin-bottom:14px;font-size:13px"></div>
       <div id="lrm-cert-section" style="display:none;margin-bottom:12px">
-        <a id="lrm-cert-link" href="#" target="_blank" class="btn btn-outline btn-sm" style="text-decoration:none">🏥 查看病單</a>
+        <a id="lrm-cert-link" href="#" target="_blank" class="btn btn-outline btn-sm" style="text-decoration:none">查看病單</a>
       </div>
       <div style="margin-bottom:12px"><label class="form-label">審核人員 *</label><input class="form-input" id="lrm-by" placeholder="管理員姓名" style="width:100%"></div>
       <div><label class="form-label">審核意見（選填）</label><input class="form-input" id="lrm-note" placeholder="退回原因或備註" style="width:100%"></div>
@@ -5118,7 +5118,7 @@ function renderLeaveRequests() {
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:${sc}">${sl}</span>
-          ${r.document_id?`<a href="/api/documents/${r.document_id}/image" target="_blank" class="btn btn-outline btn-sm" style="text-decoration:none">🏥 病單</a>`:''}
+          ${r.document_id?`<a href="/api/documents/${r.document_id}/image" target="_blank" class="btn btn-outline btn-sm" style="text-decoration:none">查看病單</a>`:''}
           ${canReview?`<button class="btn btn-primary btn-sm" onclick="openLeaveReview(${r.id})">審核</button>`:''}
           <button class="btn btn-outline btn-sm" onclick="openLeaveAdminModal(${r.id})">編輯</button>
           <button class="btn btn-danger btn-sm" onclick="deleteLeaveReq(${r.id})">刪除</button>

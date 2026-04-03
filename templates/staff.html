@@ -361,7 +361,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           <div style="margin-bottom:14px"><div class="fl">代理人（選填）</div><input class="fi" id="leave-sub" placeholder="例：王小明" style="margin-bottom:0"></div>
           <!-- 病假病單上傳 -->
           <div id="leave-cert-section" style="display:none;margin-bottom:14px;padding:12px;background:var(--bg);border-radius:8px;border:1.5px dashed var(--border)">
-            <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">🏥 病假需上傳病單</div>
+            <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">病假需上傳病單</div>
             <input type="file" id="leave-cert-input" accept="image/*,.pdf" style="display:none" onchange="leaveCertSelected(event)">
             <button class="btn btn-outline btn-sm" onclick="document.getElementById('leave-cert-input').click()">選擇病單圖片</button>
             <div id="leave-cert-status" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
@@ -1866,7 +1866,7 @@ function renderMyLeaveList() {
       <div style="padding:8px 14px;font-size:12px;color:var(--muted)">
         原因：${esc(r.reason || '')}
         ${r.substitute_name ? `　代理人：${esc(r.substitute_name)}` : ''}
-        ${r.document_id ? `<a href="/api/documents/${r.document_id}/image" target="_blank" style="margin-left:8px;color:var(--accent);font-size:11px;text-decoration:none">🏥 查看病單</a>` : ''}
+        ${r.document_id ? `<a href="/api/documents/${r.document_id}/image" target="_blank" style="margin-left:8px;color:var(--accent);font-size:11px;text-decoration:none">查看病單</a>` : ''}
         ${r.review_note ? `<div style="color:${sc};margin-top:4px">審核意見：${esc(r.review_note)}</div>` : ''}
       </div>
     </div>`;
