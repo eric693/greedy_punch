@@ -343,7 +343,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           <div class="section-label" style="margin-bottom:12px">新增請假申請</div>
           <div style="margin-bottom:10px">
             <div class="fl">假別 *</div>
-            <select class="fi" id="leave-type-sel" style="width:100%;margin-bottom:0"></select>
+            <select class="fi" id="leave-type-sel" style="width:100%;margin-bottom:0" onchange="_onLeaveTypeChange()"></select>
           </div>
           <div id="leave-type-info" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
@@ -359,6 +359,14 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           <button class="btn btn-outline" style="width:100%;font-size:12px;margin-bottom:10px" onclick="showMyAnnualSchedule()">查看我的特休排程</button>
           <div style="margin-bottom:10px"><div class="fl">請假原因 *</div><input class="fi" id="leave-reason" placeholder="例：身體不適、家庭事務" style="margin-bottom:0"></div>
           <div style="margin-bottom:14px"><div class="fl">代理人（選填）</div><input class="fi" id="leave-sub" placeholder="例：王小明" style="margin-bottom:0"></div>
+          <!-- 病假病單上傳 -->
+          <div id="leave-cert-section" style="display:none;margin-bottom:14px;padding:12px;background:var(--bg);border-radius:8px;border:1.5px dashed var(--border)">
+            <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">🏥 病假需上傳病單</div>
+            <input type="file" id="leave-cert-input" accept="image/*,.pdf" style="display:none" onchange="leaveCertSelected(event)">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('leave-cert-input').click()">選擇病單圖片</button>
+            <div id="leave-cert-status" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+            <img id="leave-cert-preview" style="display:none;max-width:100%;max-height:160px;border-radius:6px;margin-top:8px;border:1px solid var(--border)">
+          </div>
           <button class="btn btn-primary" style="width:100%" onclick="submitLeaveRequest()">送出請假申請</button>
         </div>
 
@@ -1749,6 +1757,43 @@ async function showMyAnnualSchedule() {
   } catch(e) { showToast('載入失敗', 'err'); }
 }
 
+let _leaveCertDocId = null;
+
+async function leaveCertSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const statusEl  = document.getElementById('leave-cert-status');
+  const previewEl = document.getElementById('leave-cert-preview');
+  statusEl.textContent = '上傳中...';
+  // preview
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = e => { previewEl.src = e.target.result; previewEl.style.display = ''; };
+    reader.readAsDataURL(file);
+  }
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res  = await fetch('/api/leave/upload-cert', { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.error) { statusEl.style.color='var(--red)'; statusEl.textContent = data.error; return; }
+    _leaveCertDocId = data.document_id;
+    statusEl.style.color = 'var(--green)';
+    statusEl.textContent = `✅ 已上傳：${data.filename}`;
+  } catch(e) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '上傳失敗，請重試';
+  }
+}
+
+function _onLeaveTypeChange() {
+  const sel  = document.getElementById('leave-type-sel');
+  const name = sel.options[sel.selectedIndex]?.text || '';
+  const isSick = name.includes('病假');
+  document.getElementById('leave-cert-section').style.display = isSick ? '' : 'none';
+  if (!isSick) { _leaveCertDocId = null; document.getElementById('leave-cert-status').textContent = ''; document.getElementById('leave-cert-preview').style.display = 'none'; }
+}
+
 async function submitLeaveRequest() {
   const leave_type_id = document.getElementById('leave-type-sel').value;
   const start_date    = document.getElementById('leave-start').value;
@@ -1760,16 +1805,23 @@ async function submitLeaveRequest() {
   if (!leave_type_id) { showToast('請選擇假別', 'err'); return; }
   if (!start_date || !end_date) { showToast('請選擇請假日期', 'err'); return; }
   if (!reason) { showToast('請填寫請假原因', 'err'); return; }
+  // Require cert for sick leave
+  const typeName = document.getElementById('leave-type-sel').options[document.getElementById('leave-type-sel').selectedIndex]?.text || '';
+  if (typeName.includes('病假') && !_leaveCertDocId) { showToast('病假需上傳病單', 'err'); return; }
   try {
     const res  = await fetch('/api/leave/my-requests', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute })
+      body: JSON.stringify({ leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId })
     });
     const data = await res.json();
     if (!res.ok) { showToast(data.error || '送出失敗', 'err'); return; }
     showToast('請假申請已送出，等待主管審核', 'ok');
     document.getElementById('leave-reason').value = '';
     document.getElementById('leave-sub').value    = '';
+    _leaveCertDocId = null;
+    document.getElementById('leave-cert-status').textContent = '';
+    document.getElementById('leave-cert-preview').style.display = 'none';
+    document.getElementById('leave-cert-input').value = '';
     await loadMyLeaveBalance();
     await loadMyLeaveHistory();
   } catch(e) { showToast('網路錯誤', 'err'); }

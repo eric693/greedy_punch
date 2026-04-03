@@ -265,6 +265,9 @@ def init_db():
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS daily_hours NUMERIC(4,1) DEFAULT 8",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate1 NUMERIC(4,2) DEFAULT 1.33",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate2 NUMERIC(4,2) DEFAULT 1.67",
+        "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS ot_rate3 NUMERIC(4,2) DEFAULT 2.0",
+        "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS document_id INT REFERENCES finance_documents(id) ON DELETE SET NULL",
+        "ALTER TABLE finance_documents ADD COLUMN IF NOT EXISTS image_data TEXT",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS salary_type TEXT DEFAULT 'monthly'",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(12,2) DEFAULT 0",
         "ALTER TABLE punch_staff ADD COLUMN IF NOT EXISTS vacation_quota INT DEFAULT NULL",
@@ -2837,6 +2840,7 @@ def _calc_ot_pay(staff_row, ot_hours, day_type='weekday'):
     daily_hours = float(staff_row.get('daily_hours')  or 8)
     ot_rate1    = float(staff_row.get('ot_rate1')     or 1.33)
     ot_rate2    = float(staff_row.get('ot_rate2')     or 1.67)
+    ot_rate3    = float(staff_row.get('ot_rate3')     or 2.0)
 
     if salary_type == 'hourly':
         base_hourly = hourly_rate
@@ -2851,11 +2855,11 @@ def _calc_ot_pay(staff_row, ot_hours, day_type='weekday'):
         pay = round(base_hourly * h * 2.0, 0)
     elif day_type == 'rest_day':
         billed = max(h, 4.0)
-        h1  = min(billed, 2.0); h2  = max(0.0, billed - 2.0)
-        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2), 0)
+        h1 = min(billed, 2.0); h2 = min(max(0.0, billed - 2.0), 2.0); h3 = max(0.0, billed - 4.0)
+        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2 + h3 * ot_rate3), 0)
     else:
-        h1  = min(h, 2.0); h2  = max(0.0, h - 2.0)
-        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2), 0)
+        h1 = min(h, 2.0); h2 = min(max(0.0, h - 2.0), 2.0); h3 = max(0.0, h - 4.0)
+        pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2 + h3 * ot_rate3), 0)
 
     return pay, base_hourly
 
@@ -2969,7 +2973,7 @@ def api_ot_calc_preview():
     with get_db() as conn:
         staff = conn.execute("""
             SELECT name, base_salary, hourly_rate, daily_hours,
-                   ot_rate1, ot_rate2, salary_type
+                   ot_rate1, ot_rate2, ot_rate3, salary_type
             FROM punch_staff WHERE id=%s
         """, (staff_id,)).fetchone()
     if not staff: return ('', 404)
@@ -2977,11 +2981,12 @@ def api_ot_calc_preview():
     ot_pay, base_hourly = _calc_ot_pay(staff, ot_hours, day_type)
 
     if day_type == 'rest_day':
-        billed = max(ot_hours, 4.0); h1 = min(billed, 2.0); h2 = max(0.0, billed - 2.0)
+        billed = max(ot_hours, 4.0)
+        h1 = min(billed, 2.0); h2 = min(max(0.0, billed - 2.0), 2.0); h3 = max(0.0, billed - 4.0)
     elif day_type in ('holiday', 'special'):
-        h1 = ot_hours; h2 = 0.0
+        h1 = ot_hours; h2 = 0.0; h3 = 0.0
     else:
-        h1 = min(ot_hours, 2.0); h2 = max(0.0, ot_hours - 2.0)
+        h1 = min(ot_hours, 2.0); h2 = min(max(0.0, ot_hours - 2.0), 2.0); h3 = max(0.0, ot_hours - 4.0)
 
     return jsonify({
         'staff_name':  staff['name'],
@@ -2993,8 +2998,10 @@ def api_ot_calc_preview():
         'day_type':    day_type,
         'h1':          h1,
         'h2':          h2,
+        'h3':          h3,
         'ot_rate1':    float(staff.get('ot_rate1') or 1.33),
         'ot_rate2':    float(staff.get('ot_rate2') or 1.67),
+        'ot_rate3':    float(staff.get('ot_rate3') or 2.0),
         'ot_pay':      ot_pay,
     })
 
@@ -3467,6 +3474,7 @@ def api_leave_submit():
     end_half      = bool(b.get('end_half',   False))
     reason        = b.get('reason', '').strip()
     substitute    = b.get('substitute_name', '').strip()
+    document_id   = b.get('document_id') or None
 
     if not all([leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
@@ -3493,10 +3501,10 @@ def api_leave_submit():
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, reason, substitute_name)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+               total_days, reason, substitute_name, document_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, reason, substitute)).fetchone()
+              total_days, reason, substitute, document_id)).fetchone()
     return jsonify(leave_req_row(row)), 201
 
 # ── Leave Balance ─────────────────────────────────────────────────
@@ -8757,6 +8765,52 @@ def api_expense_ocr():
     except Exception as e:
         print(f"[expense_ocr doc] {e}")
     return jsonify(result)
+
+
+# ── Leave: medical certificate upload ───────────────────────────
+
+@app.route('/api/leave/upload-cert', methods=['POST'])
+def api_leave_upload_cert():
+    sid = session.get('punch_staff_id')
+    if not sid: return jsonify({'error': '請先登入'}), 401
+    file = request.files.get('file')
+    if not file: return jsonify({'error': '請上傳圖片'}), 400
+    raw = file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        return jsonify({'error': '檔案不可超過 10MB'}), 400
+    import base64 as _b64c
+    image_data = 'data:' + (file.content_type or 'image/jpeg') + ';base64,' + _b64c.b64encode(raw).decode()
+    try:
+        with get_db() as conn:
+            doc = conn.execute("""
+                INSERT INTO finance_documents (filename, doc_type, image_data, upload_date)
+                VALUES (%s, 'medical_cert', %s, CURRENT_DATE) RETURNING id
+            """, (file.filename, image_data)).fetchone()
+        return jsonify({'document_id': doc['id'], 'filename': file.filename})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/documents/<int:doc_id>/image', methods=['GET'])
+def api_document_image(doc_id):
+    """Return the stored image as a redirect to data URL (for admin/employee viewing)."""
+    # Admin or staff can view
+    if not (session.get('logged_in') or session.get('punch_staff_id')):
+        return jsonify({'error': 'unauthorized'}), 401
+    with get_db() as conn:
+        doc = conn.execute("SELECT image_data, filename FROM finance_documents WHERE id=%s", (doc_id,)).fetchone()
+    if not doc or not doc['image_data']:
+        return jsonify({'error': '找不到圖片'}), 404
+    # image_data is "data:image/jpeg;base64,..."
+    import base64 as _b64v, re as _rev
+    m = _rev.match(r'data:([^;]+);base64,(.+)', doc['image_data'])
+    if not m:
+        return jsonify({'error': '圖片格式錯誤'}), 400
+    content_type, b64 = m.group(1), m.group(2)
+    raw = _b64v.b64decode(b64)
+    from flask import Response
+    return Response(raw, mimetype=content_type,
+                    headers={'Content-Disposition': f'inline; filename="{doc["filename"]}"'})
 
 
 # ── Admin endpoints ─────────────────────────────────────────────

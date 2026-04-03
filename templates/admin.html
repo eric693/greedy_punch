@@ -2322,6 +2322,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
     <div class="modal-body">
       <input type="hidden" id="lrm-id">
       <div id="lrm-info" style="padding:12px;background:var(--bg);border-radius:8px;margin-bottom:14px;font-size:13px"></div>
+      <div id="lrm-cert-section" style="display:none;margin-bottom:12px">
+        <a id="lrm-cert-link" href="#" target="_blank" class="btn btn-outline btn-sm" style="text-decoration:none">🏥 查看病單</a>
+      </div>
       <div style="margin-bottom:12px"><label class="form-label">審核人員 *</label><input class="form-input" id="lrm-by" placeholder="管理員姓名" style="width:100%"></div>
       <div><label class="form-label">審核意見（選填）</label><input class="form-input" id="lrm-note" placeholder="退回原因或備註" style="width:100%"></div>
     </div>
@@ -2370,8 +2373,9 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div class="form-group"><label class="form-label">投保薪資</label><input class="form-input" type="number" id="ssm-insured" placeholder="依勞健保投保級距"></div>
         <div class="form-group"><label class="form-label">每日工時</label><input class="form-input" type="number" id="ssm-daily-h" value="8" min="1" max="12" step="0.5"></div>
         <div class="form-group"><label class="form-label">排休配額（天/月）</label><input class="form-input" type="number" id="ssm-vq" placeholder="空白=使用月份預設"></div>
-        <div class="form-group"><label class="form-label">加班費率1（前2h）</label><input class="form-input" type="number" id="ssm-ot1" value="1.33" step="0.01"></div>
-        <div class="form-group"><label class="form-label">加班費率2（後續）</label><input class="form-input" type="number" id="ssm-ot2" value="1.67" step="0.01"></div>
+        <div class="form-group"><label class="form-label">加班費率1（第1-2h）</label><input class="form-input" type="number" id="ssm-ot1" value="1.33" step="0.01"></div>
+        <div class="form-group"><label class="form-label">加班費率2（第3-4h）</label><input class="form-input" type="number" id="ssm-ot2" value="1.67" step="0.01"></div>
+        <div class="form-group"><label class="form-label">加班費率3（第5h起）</label><input class="form-input" type="number" id="ssm-ot3" value="2.0" step="0.01"></div>
         <div class="form-group full-width"><label class="form-label">薪資備註</label><input class="form-input" id="ssm-notes" placeholder="選填"></div>
         <div class="form-group"><label class="form-label">身分證字號</label><input class="form-input" id="ssm-national-id" placeholder="A123456789（扣繳憑單/EDI用）"></div>
         <div class="form-group"><label class="form-label">性別</label><select class="form-input" id="ssm-gender"><option value="">—</option><option value="M">男</option><option value="F">女</option></select></div>
@@ -4401,8 +4405,9 @@ async function openOTReview(id) {
   if (pok && pd.base_hourly > 0) {
     const typeLabel = pd.salary_type==='hourly'?'時薪制':'月薪制';
     let detail = `${typeLabel}　時薪 $${pd.base_hourly}/h<br>`;
-    if (pd.h1 > 0) detail += `前 ${pd.h1}h × ${pd.ot_rate1} = $${Math.round(pd.base_hourly*pd.h1*pd.ot_rate1)}<br>`;
-    if (pd.h2 > 0) detail += `後 ${pd.h2}h × ${pd.ot_rate2} = $${Math.round(pd.base_hourly*pd.h2*pd.ot_rate2)}`;
+    if (pd.h1 > 0) detail += `前2h ${pd.h1}h × ${pd.ot_rate1} = $${Math.round(pd.base_hourly*pd.h1*pd.ot_rate1)}<br>`;
+    if (pd.h2 > 0) detail += `3-4h ${pd.h2}h × ${pd.ot_rate2} = $${Math.round(pd.base_hourly*pd.h2*pd.ot_rate2)}<br>`;
+    if (pd.h3 > 0) detail += `5h起 ${pd.h3}h × ${pd.ot_rate3} = $${Math.round(pd.base_hourly*pd.h3*pd.ot_rate3)}`;
     document.getElementById('otrm-pay-detail').innerHTML = detail;
     document.getElementById('otrm-pay-amount').textContent = `$${Number(pd.ot_pay).toLocaleString()}`;
     prevEl.style.display = '';
@@ -5240,6 +5245,14 @@ function openLeaveReview(id) {
     <span style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name)}</span><br>
     ${r.start_date}${sh} ~ ${r.end_date}${eh}　<strong>${r.total_days} 天</strong><br>
     <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>${balHtml}`;
+  const certSec  = document.getElementById('lrm-cert-section');
+  const certLink = document.getElementById('lrm-cert-link');
+  if (r.document_id) {
+    certLink.href = `/api/documents/${r.document_id}/image`;
+    certSec.style.display = '';
+  } else {
+    certSec.style.display = 'none';
+  }
   document.getElementById('leave-review-modal').style.display='flex';
 }
 function closeLeaveReview() { document.getElementById('leave-review-modal').style.display='none'; }
@@ -5920,6 +5933,7 @@ function openSalStaffModal(id) {
   document.getElementById('ssm-daily-h').value  = s.daily_hours||8;
   document.getElementById('ssm-ot1').value      = s.ot_rate1||1.33;
   document.getElementById('ssm-ot2').value      = s.ot_rate2||1.67;
+  document.getElementById('ssm-ot3').value      = s.ot_rate3||2.0;
   document.getElementById('ssm-vq').value          = s.vacation_quota!=null?s.vacation_quota:'';
   document.getElementById('ssm-notes').value       = s.salary_notes||'';
   document.getElementById('ssm-national-id').value = s.national_id||'';
@@ -6026,6 +6040,7 @@ async function saveSalStaff() {
     daily_hours:   parseFloat(document.getElementById('ssm-daily-h').value)||8,
     ot_rate1:      parseFloat(document.getElementById('ssm-ot1').value)||1.33,
     ot_rate2:      parseFloat(document.getElementById('ssm-ot2').value)||1.67,
+    ot_rate3:      parseFloat(document.getElementById('ssm-ot3').value)||2.0,
     vacation_quota:document.getElementById('ssm-vq').value?parseInt(document.getElementById('ssm-vq').value):null,
     salary_notes:  document.getElementById('ssm-notes').value.trim(),
     salary_item_ids:       selectedItemIds,
