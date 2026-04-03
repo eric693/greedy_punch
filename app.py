@@ -1147,13 +1147,16 @@ def api_punch_record_manual():
 @login_required
 def api_punch_record_update(rid):
     b = request.get_json(force=True)
+    punch_type = b.get('punch_type')
+    if punch_type not in ('in', 'out', 'break_out', 'break_in'):
+        return jsonify({'error': '無效的打卡類型'}), 400
     punched_at_parsed = _parse_tw_datetime(b.get('punched_at'))
     with get_db() as conn:
         row = conn.execute("""
             UPDATE punch_records
             SET punch_type=%s, punched_at=%s, note=%s, is_manual=TRUE, manual_by=%s
             WHERE id=%s RETURNING *
-        """, (b.get('punch_type'), punched_at_parsed,
+        """, (punch_type, punched_at_parsed,
               b.get('note', ''), b.get('manual_by', ''), rid)).fetchone()
     return jsonify(punch_record_row(row)) if row else ('', 404)
 
@@ -1596,10 +1599,34 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
                     = (NOW() AT TIME ZONE 'Asia/Taipei')::date
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
-        if not last:                               punch_type = 'in'
-        elif last['punch_type'] == 'in':           punch_type = 'out'
-        elif last['punch_type'] == 'break_out':    punch_type = 'break_in'
-        else:                                      punch_type = 'in'
+        if not last:
+            punch_type = 'in'
+        elif last['punch_type'] == 'in':
+            punch_type = 'out'
+        elif last['punch_type'] == 'break_out':
+            punch_type = 'break_in'
+        elif last['punch_type'] == 'out':
+            # 下班後需間隔至少 10 分鐘才能再打上班卡，防止誤觸
+            with get_db() as _conn2:
+                from datetime import datetime as _dtnow, timezone as _tz2, timedelta as _td2
+                _TW = _tz2(_td2(hours=8))
+                _last_row = _conn2.execute("""
+                    SELECT punched_at FROM punch_records
+                    WHERE staff_id=%s
+                      AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
+                        = (NOW() AT TIME ZONE 'Asia/Taipei')::date
+                    ORDER BY punched_at DESC LIMIT 1
+                """, (staff['id'],)).fetchone()
+            if _last_row:
+                _elapsed = (_dtnow.now(_TW) - _last_row['punched_at'].astimezone(_TW)).total_seconds()
+                if _elapsed < 600:  # 10 分鐘 = 600 秒
+                    _send_line_punch(user_id,
+                        f'⚠️ 您已於今日打過下班卡\n距上次打卡僅 {int(_elapsed//60)} 分 {int(_elapsed%60)} 秒\n\n'
+                        f'如需補打卡，請至員工系統操作。')
+                    return
+            punch_type = 'in'
+        else:
+            punch_type = 'in'
 
     label = PUNCH_LABEL.get(punch_type, punch_type)
 
@@ -2299,8 +2326,9 @@ def api_shift_assignment_create():
                 months = list({d[:7] for d in dates})
                 for month in months:
                     row = conn.execute("""
-                        SELECT dates FROM schedule_requests
-                        WHERE staff_id=%s AND month=%s AND status='approved'
+                        SELECT array_agg(DISTINCT d) as dates
+                        FROM schedule_requests, unnest(dates) d
+                        WHERE staff_id=%s AND month=%s AND status IN ('approved','pending')
                     """, (sid, month)).fetchone()
                     if row:
                         approved_dates = row['dates'] or []
@@ -3281,7 +3309,11 @@ def _calc_annual_leave_schedule(hire_date_str):
     return result
 
 def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=False):
-    """計算請假天數（含半天選項），排除週日"""
+    """計算請假天數（含半天選項），排除週日
+    start_half=True: 起始日只算下午（PM），貢獻 0.5 天
+    end_half=True:   結束日只算上午（AM），貢獻 0.5 天
+    同一天時兩個 flag 各自獨立加總，不互斥。
+    """
     from datetime import date as _date, timedelta as _tdd
     try:
         s = _date.fromisoformat(start_date_str)
@@ -3293,9 +3325,20 @@ def _calc_leave_days(start_date_str, end_date_str, start_half=False, end_half=Fa
     cur  = s
     while cur <= e:
         if cur.weekday() != 6:  # exclude Sunday (勞基法最低標準)
-            if cur == s and start_half: days += 0.5
-            elif cur == e and end_half: days += 0.5
-            else: days += 1.0
+            if cur == s and cur == e:
+                # 同一天：start_half 和 end_half 各貢獻 0.5，兩者都沒設則算全天
+                if start_half and end_half:
+                    days += 1.0
+                elif start_half or end_half:
+                    days += 0.5
+                else:
+                    days += 1.0
+            elif cur == s and start_half:
+                days += 0.5
+            elif cur == e and end_half:
+                days += 0.5
+            else:
+                days += 1.0
         cur += _tdd(days=1)
     return days
 
@@ -3823,15 +3866,42 @@ def salary_record_row(row):
     return d
 
 def _eval_formula(formula, base_salary, insured_salary, service_years):
-    """安全計算薪資公式"""
+    """安全計算薪資公式（使用 AST，禁止任意程式碼執行）"""
+    import ast as _ast
+    import operator as _op
     if not formula: return 0.0
+    _vars = {
+        'base_salary':    float(base_salary or 0),
+        'insured_salary': float(insured_salary or 0),
+        'service_years':  float(service_years or 0),
+    }
+    _ops = {
+        _ast.Add:  _op.add,  _ast.Sub: _op.sub,
+        _ast.Mult: _op.mul,  _ast.Div: _op.truediv,
+        _ast.Pow:  _op.pow,  _ast.Mod: _op.mod,
+        _ast.USub: _op.neg,  _ast.UAdd: _op.pos,
+    }
+    def _safe_eval(node):
+        if isinstance(node, _ast.Constant):
+            if not isinstance(node.value, (int, float)):
+                raise ValueError('非數字常數')
+            return float(node.value)
+        if isinstance(node, _ast.Name):
+            if node.id not in _vars:
+                raise ValueError(f'未知變數: {node.id}')
+            return _vars[node.id]
+        if isinstance(node, _ast.BinOp):
+            fn = _ops.get(type(node.op))
+            if not fn: raise ValueError('不支援的運算子')
+            return fn(_safe_eval(node.left), _safe_eval(node.right))
+        if isinstance(node, _ast.UnaryOp):
+            fn = _ops.get(type(node.op))
+            if not fn: raise ValueError('不支援的一元運算子')
+            return fn(_safe_eval(node.operand))
+        raise ValueError(f'不支援的語法: {type(node).__name__}')
     try:
-        result = eval(formula, {"__builtins__": {}}, {
-            'base_salary':    float(base_salary or 0),
-            'insured_salary': float(insured_salary or 0),
-            'service_years':  float(service_years or 0),
-        })
-        return round(float(result), 2)
+        tree = _ast.parse(formula.strip(), mode='eval')
+        return round(float(_safe_eval(tree.body)), 2)
     except Exception:
         return 0.0
 
@@ -9543,9 +9613,9 @@ def _line_submit_leave(staff, user_id, text):
         date_str2 = date_str1
 
     if period_token == '上午':
-        start_half = True; end_half = True
+        start_half = False; end_half = True   # AM only: end_date 只算上午
     elif period_token == '下午':
-        start_half = False; end_half = True
+        start_half = True; end_half = False   # PM only: start_date 只算下午
 
     reason = '（LINE 請假）'
 
@@ -9607,8 +9677,8 @@ def _line_submit_leave(staff, user_id, text):
         """, (staff['id'], lt['id'], date_str1, date_str2, days,
               start_half, end_half, reason)).fetchone()
 
-    period_label = '（上午半天）' if (start_half and end_half and date_str1 == date_str2) else \
-                   '（下午半天）' if (end_half and not start_half and date_str1 == date_str2) else ''
+    period_label = '（上午半天）' if (not start_half and end_half and date_str1 == date_str2) else \
+                   '（下午半天）' if (start_half and not end_half and date_str1 == date_str2) else ''
     bal_str = f'（剩餘 {remain:.1f} 天）' if remain is not None else ''
     _send_line_punch(user_id,
         f'✅ 請假申請已送出\n\n'
