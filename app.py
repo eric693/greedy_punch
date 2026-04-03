@@ -1167,37 +1167,107 @@ def api_punch_record_delete(rid):
         conn.execute("DELETE FROM punch_records WHERE id=%s", (rid,))
     return jsonify({'deleted': rid})
 
+def _shift_aware_day_map(raw_punches, tz):
+    """
+    把原始打卡記錄依「上班日期」分組，完整支援跨日班次。
+
+    規則：
+    - 'in' 打卡 → work_date = 該筆打卡的台灣日曆日期，同時記錄為 last_in
+    - 其他類型  → 往前找 28 小時內最近的 'in'，work_date 沿用其日期；
+                  若找不到則退回日曆日期
+
+    raw_punches: iterable，每筆需有欄位 staff_id / punch_type / punched_at / is_manual
+                 已按 (staff_id, punched_at ASC) 排序
+    tz:          台灣時區 (datetime.timezone 物件)
+    回傳: dict  { (staff_id, 'YYYY-MM-DD') → {
+                    'ins':[], 'outs':[], 'break_outs':[], 'break_ins':[], 'has_manual': bool
+                } }
+    """
+    from collections import defaultdict
+    from datetime import timezone as _tz0
+
+    result = defaultdict(lambda: {
+        'ins': [], 'outs': [], 'break_outs': [], 'break_ins': [], 'has_manual': False
+    })
+    last_in = {}   # staff_id → last 'in' datetime (TZ-aware, TW)
+
+    for r in raw_punches:
+        pa = r['punched_at']
+        if pa.tzinfo is None:
+            pa = pa.replace(tzinfo=_tz0.utc)
+        pa_tw = pa.astimezone(tz)
+        sid   = r['staff_id']
+        ptype = r['punch_type']
+
+        if ptype == 'in':
+            work_date       = pa_tw.date()
+            last_in[sid]    = pa_tw
+        else:
+            prev_in = last_in.get(sid)
+            if prev_in is not None and 0 < (pa_tw - prev_in).total_seconds() <= 28 * 3600:
+                work_date = prev_in.date()
+            else:
+                work_date = pa_tw.date()
+
+        key    = (sid, work_date.isoformat())
+        bucket = result[key]
+        if r.get('is_manual'):
+            bucket['has_manual'] = True
+
+        if   ptype == 'in':        bucket['ins'].append(pa_tw)
+        elif ptype == 'out':       bucket['outs'].append(pa_tw)
+        elif ptype == 'break_out': bucket['break_outs'].append(pa_tw)
+        elif ptype == 'break_in':  bucket['break_ins'].append(pa_tw)
+
+    return result
+
+
 @app.route('/api/punch/summary', methods=['GET'])
 @login_required
 def api_punch_summary():
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
         rows = conn.execute("""
-            SELECT ps.id as staff_id, ps.name as staff_name,
-                   (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
-                   MIN(CASE WHEN pr.punch_type='in'  THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as clock_in,
-                   MAX(CASE WHEN pr.punch_type='out' THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as clock_out,
-                   COUNT(*) as punch_count,
-                   BOOL_OR(pr.is_manual) as has_manual
+            SELECT pr.staff_id, ps.name as staff_name,
+                   pr.punch_type, pr.punched_at, pr.is_manual
             FROM punch_records pr JOIN punch_staff ps ON ps.id=pr.staff_id
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
-            GROUP BY ps.id, ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
-            ORDER BY (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date DESC, ps.name
-        """, (month,)).fetchall()
+            WHERE pr.punched_at AT TIME ZONE 'Asia/Taipei' >=
+                  date_trunc('month', TO_DATE(%s,'YYYY-MM')) - INTERVAL '1 day'
+              AND pr.punched_at AT TIME ZONE 'Asia/Taipei' <
+                  date_trunc('month', TO_DATE(%s,'YYYY-MM')) + INTERVAL '1 month 2 days'
+            ORDER BY pr.staff_id, pr.punched_at ASC
+        """, (month, month)).fetchall()
+
+    staff_names = {r['staff_id']: r['staff_name'] for r in rows}
+    day_map = _shift_aware_day_map(rows, TW_TZ)
+
     result = []
-    for r in rows:
-        d = dict(r)
-        d['work_date']  = d['work_date'].isoformat()  if d['work_date']  else None
-        d['clock_in']   = d['clock_in'].isoformat()   if d['clock_in']   else None
-        d['clock_out']  = d['clock_out'].isoformat()  if d['clock_out']  else None
-        if d['clock_in'] and d['clock_out']:
+    for (sid, ds), bucket in sorted(day_map.items(),
+                                     key=lambda kv: (kv[0][1], staff_names.get(kv[0][0], '')),
+                                     reverse=True):
+        if not ds.startswith(month):
+            continue
+        ins   = bucket['ins']
+        outs  = bucket['outs']
+        clock_in  = min(ins).isoformat()  if ins  else None
+        clock_out = max(outs).isoformat() if outs else None
+        punch_count = len(ins) + len(outs) + len(bucket['break_outs']) + len(bucket['break_ins'])
+        duration_min = None
+        if clock_in and clock_out:
             from datetime import datetime as _dt2
-            ci = _dt2.fromisoformat(d['clock_in'].replace('Z', ''))
-            co = _dt2.fromisoformat(d['clock_out'].replace('Z', ''))
-            d['duration_min'] = max(0, int((co - ci).total_seconds() / 60))
-        else:
-            d['duration_min'] = None
-        result.append(d)
+            ci = _dt2.fromisoformat(clock_in)
+            co = _dt2.fromisoformat(clock_out)
+            duration_min = max(0, int((co - ci).total_seconds() / 60))
+        result.append({
+            'staff_id':    sid,
+            'staff_name':  staff_names.get(sid, ''),
+            'work_date':   ds,
+            'clock_in':    clock_in,
+            'clock_out':   clock_out,
+            'punch_count': punch_count,
+            'has_manual':  bucket['has_manual'],
+            'duration_min': duration_min,
+        })
     return jsonify(result)
 
 @app.route('/api/attendance/monthly-stats', methods=['GET'])
@@ -1209,22 +1279,18 @@ def api_attendance_monthly_stats():
     """
     month = request.args.get('month') or _dt.now(TW_TZ).strftime('%Y-%m')
     with get_db() as conn:
-        # 每人每日打卡彙整
         rows = conn.execute("""
-            SELECT ps.id as staff_id, ps.name as staff_name,
+            SELECT pr.staff_id, ps.name as staff_name,
                    ps.department, ps.role,
-                   (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date as work_date,
-                   MIN(CASE WHEN pr.punch_type='in'  THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as clock_in,
-                   MAX(CASE WHEN pr.punch_type='out' THEN pr.punched_at AT TIME ZONE 'Asia/Taipei' END) as clock_out,
-                   BOOL_OR(pr.punch_type='in')  as has_in,
-                   BOOL_OR(pr.punch_type='out') as has_out
+                   pr.punch_type, pr.punched_at, pr.is_manual
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id = pr.staff_id AND ps.active = TRUE
-            WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM') = %s
-            GROUP BY ps.id, ps.name, ps.department, ps.role,
-                     (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
-            ORDER BY ps.name, work_date
-        """, (month,)).fetchall()
+            WHERE pr.punched_at AT TIME ZONE 'Asia/Taipei' >=
+                  date_trunc('month', TO_DATE(%s,'YYYY-MM')) - INTERVAL '1 day'
+              AND pr.punched_at AT TIME ZONE 'Asia/Taipei' <
+                  date_trunc('month', TO_DATE(%s,'YYYY-MM')) + INTERVAL '1 month 2 days'
+            ORDER BY pr.staff_id, pr.punched_at ASC
+        """, (month, month)).fetchall()
 
         # 班別指派（用於遲到判斷）
         shift_rows = conn.execute("""
@@ -1235,6 +1301,17 @@ def api_attendance_monthly_stats():
         """, (month,)).fetchall()
         shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
 
+    staff_info = {}
+    for r in rows:
+        if r['staff_id'] not in staff_info:
+            staff_info[r['staff_id']] = {
+                'staff_name': r['staff_name'],
+                'department': r['department'] or '',
+                'role':       r['role']       or '',
+            }
+
+    day_map = _shift_aware_day_map(rows, TW_TZ)
+
     from collections import defaultdict
     stats = defaultdict(lambda: {
         'staff_id': None, 'staff_name': '', 'department': '', 'role': '',
@@ -1243,23 +1320,26 @@ def api_attendance_monthly_stats():
         'anomaly_dates': [],
     })
 
-    for r in rows:
-        sid  = r['staff_id']
-        ds   = str(r['work_date'])
+    for (sid, ds), bucket in day_map.items():
+        if not ds.startswith(month):
+            continue
         s    = stats[sid]
+        info = staff_info.get(sid, {})
         s['staff_id']   = sid
-        s['staff_name'] = r['staff_name']
-        s['department'] = r['department'] or ''
-        s['role']       = r['role']       or ''
+        s['staff_name'] = info.get('staff_name', '')
+        s['department'] = info.get('department', '')
+        s['role']       = info.get('role', '')
 
-        has_in  = bool(r['has_in'])
-        has_out = bool(r['has_out'])
+        has_in  = bool(bucket['ins'])
+        has_out = bool(bucket['outs'])
 
         if has_in or has_out:
             s['days_worked'] += 1
 
-        if r['clock_in'] and r['clock_out']:
-            diff = (r['clock_out'] - r['clock_in']).total_seconds() / 60
+        if has_in and has_out:
+            clock_in  = min(bucket['ins'])
+            clock_out = max(bucket['outs'])
+            diff = (clock_out - clock_in).total_seconds() / 60
             if diff > 0:
                 s['total_minutes'] += int(diff)
 
@@ -1272,13 +1352,13 @@ def api_attendance_monthly_stats():
             s['anomaly_dates'].append({'date': ds, 'type': 'missing_in', 'label': '缺上班卡'})
 
         # 遲到（比對班別）
-        if has_in and r['clock_in']:
+        if has_in:
+            clock_in = min(bucket['ins'])
             shift = shift_map.get((sid, ds))
             if shift and shift['start_time']:
                 try:
                     sh, sm = map(int, str(shift['start_time'])[:5].split(':'))
-                    ci_local = r['clock_in']
-                    ih, im   = ci_local.hour, ci_local.minute
+                    ih, im = clock_in.hour, clock_in.minute
                     late_mins = (ih * 60 + im) - (sh * 60 + sm)
                     if late_mins > 10:
                         s['late_count'] += 1
@@ -1288,13 +1368,13 @@ def api_attendance_monthly_stats():
                     pass
 
         # 早退（比對班別）
-        if has_out and r['clock_out']:
+        if has_out:
+            clock_out = max(bucket['outs'])
             shift = shift_map.get((sid, ds))
             if shift and shift['end_time']:
                 try:
                     eh, em = map(int, str(shift['end_time'])[:5].split(':'))
-                    co_local = r['clock_out']
-                    oh, om   = co_local.hour, co_local.minute
+                    oh, om = clock_out.hour, clock_out.minute
                     early_mins = (eh * 60 + em) - (oh * 60 + om)
                     if early_mins > 15:
                         s['early_count'] += 1
@@ -1595,8 +1675,7 @@ def _do_line_punch(staff, user_id, lat, lng, forced_type, PUNCH_LABEL):
             last = conn.execute("""
                 SELECT punch_type FROM punch_records
                 WHERE staff_id=%s
-                  AND (punched_at AT TIME ZONE 'Asia/Taipei')::date
-                    = (NOW() AT TIME ZONE 'Asia/Taipei')::date
+                  AND punched_at > NOW() - INTERVAL '28 hours'
                 ORDER BY punched_at DESC LIMIT 1
             """, (staff['id'],)).fetchone()
         if not last:
@@ -3916,40 +3995,35 @@ def _calc_service_years(hire_date_str):
 
 def _calc_punch_hours(conn, staff_id, month):
     """
-    從打卡記錄計算實際工時（時薪制用）
-    邏輯：每天找最早 in + 最晚 out，扣除休息時間
+    從打卡記錄計算實際工時（時薪制用），支援跨日班次。
+    邏輯：每個工作日找最早 in + 最晚 out，扣除休息時間
     回傳 (total_hours, work_days, details)
     """
-    from datetime import datetime as _dth, timezone as _tzh, timedelta as _tdh
+    from datetime import timezone as _tzh, timedelta as _tdh
     TW = _tzh(_tdh(hours=8))
 
     rows = conn.execute("""
-        SELECT punch_type, punched_at
+        SELECT %s as staff_id, punch_type, punched_at, is_manual
         FROM punch_records
         WHERE staff_id=%s
-          AND to_char(punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
+          AND punched_at AT TIME ZONE 'Asia/Taipei' >=
+              date_trunc('month', TO_DATE(%s,'YYYY-MM')) - INTERVAL '1 day'
+          AND punched_at AT TIME ZONE 'Asia/Taipei' <
+              date_trunc('month', TO_DATE(%s,'YYYY-MM')) + INTERVAL '1 month 2 days'
         ORDER BY punched_at ASC
-    """, (staff_id, month)).fetchall()
+    """, (staff_id, staff_id, month, month)).fetchall()
 
-    # Group by date
-    day_map = {}
-    for r in rows:
-        pa = r['punched_at']
-        if pa.tzinfo is None:
-            pa = pa.replace(tzinfo=_tzh.utc)
-        pa_tw  = pa.astimezone(TW)
-        ds     = pa_tw.strftime('%Y-%m-%d')
-        if ds not in day_map:
-            day_map[ds] = []
-        day_map[ds].append({'type': r['punch_type'], 'dt': pa_tw})
+    day_map = _shift_aware_day_map(rows, TW)
 
     total_hours = 0.0
     details     = []
-    for ds, punches in sorted(day_map.items()):
-        ins   = [p['dt'] for p in punches if p['type'] == 'in']
-        outs  = [p['dt'] for p in punches if p['type'] == 'out']
-        b_out = [p['dt'] for p in punches if p['type'] == 'break_out']
-        b_in  = [p['dt'] for p in punches if p['type'] == 'break_in']
+    for (sid, ds), bucket in sorted(day_map.items()):
+        if not ds.startswith(month):
+            continue
+        ins   = bucket['ins']
+        outs  = bucket['outs']
+        b_out = bucket['break_outs']
+        b_in  = bucket['break_ins']
 
         if not ins or not outs:
             continue
@@ -3961,7 +4035,6 @@ def _calc_punch_hours(conn, staff_id, month):
         # 扣除休息時間
         break_mins = 0.0
         for bo in b_out:
-            # 找最近的 break_in
             matched = [bi for bi in b_in if bi > bo]
             if matched:
                 break_mins += (min(matched) - bo).total_seconds() / 60
@@ -3970,14 +4043,15 @@ def _calc_punch_hours(conn, staff_id, month):
         net_hrs  = round(net_mins / 60, 2)
         total_hours += net_hrs
         details.append({
-            'date':        ds,
-            'clock_in':    work_start.strftime('%H:%M'),
-            'clock_out':   work_end.strftime('%H:%M'),
-            'break_mins':  round(break_mins),
-            'net_hours':   net_hrs,
+            'date':       ds,
+            'clock_in':   work_start.strftime('%H:%M'),
+            'clock_out':  work_end.strftime('%H:%M'),
+            'break_mins': round(break_mins),
+            'net_hours':  net_hrs,
         })
 
-    return round(total_hours, 2), len(day_map), details
+    work_days = len([k for k in day_map if k[0] == staff_id and k[1].startswith(month)])
+    return round(total_hours, 2), work_days, details
 
 
 def _auto_generate_salary(conn, staff, month, work_days=None):
@@ -4506,7 +4580,8 @@ def api_salary_staff_list():
             SELECT id, name, username, role, active, employee_code, department,
                    position_title, hire_date, birth_date, base_salary, insured_salary,
                    daily_hours, ot_rate1, ot_rate2, salary_type, hourly_rate,
-                   vacation_quota, salary_notes, salary_item_ids, salary_item_overrides
+                   vacation_quota, salary_notes, salary_item_ids, salary_item_overrides,
+                   national_id, gender, insurance_type, address
             FROM punch_staff ORDER BY name
         """).fetchall()
     result = []
