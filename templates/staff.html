@@ -291,9 +291,6 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 
       <!-- 加班申請 tab -->
       <div id="panel-overtime" class="tab-body" style="display:none">
-        <div style="margin-bottom:14px;padding:10px 14px;background:var(--orange-light);border-radius:8px;border:1px solid #f5c0a0;font-size:12px;color:var(--text)">
-          <strong>勞基法加班費</strong>：前 2 小時 × 1.33、第 3 小時起 × 1.67
-        </div>
         <div style="background:#fff;border-radius:10px;border:1.5px solid var(--border);padding:16px;margin-bottom:16px">
           <div class="section-label" style="margin-bottom:12px">新增加班申請</div>
           <div style="margin-bottom:10px"><div class="fl">加班日期</div><input class="fi" type="date" id="ot-date" style="margin-bottom:8px"></div>
@@ -308,7 +305,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
               <option value="weekday">平日（前2h×1.33，後續×1.67）</option>
               <option value="rest_day">休息日（最少4h）</option>
               <option value="holiday">國定假日（全程×2倍）</option>
-              <option value="special">例假日（全程×2倍）</option>
+              <option value="special">備註兼職人員</option>
             </select>
           </div>
           <div style="margin-bottom:14px"><div class="fl">加班原因 *</div><input class="fi" id="ot-reason" placeholder="例：客戶急件、備料作業" style="margin-bottom:0"></div>
@@ -1068,7 +1065,7 @@ function updateOTHoursPreview(){
   let mins=(eh*60+em)-(sh*60+sm);
   if(mins<=0)mins+=24*60;
   const hrs=Math.round(mins/60*100)/100;
-  const DT_LABEL={weekday:'平日',rest_day:'休息日',holiday:'國定假日',special:'例假日'};
+  const DT_LABEL={weekday:'平日',rest_day:'休息日',holiday:'國定假日',special:'備註兼職人員'};
   let detail='';
   if(dt==='rest_day'){const billed=Math.max(hrs,4);detail=`休息日（實際${hrs}h，計費${billed}h）`;}
   else if(dt==='holiday'||dt==='special'){detail=`${DT_LABEL[dt]}：${hrs}h × 2 倍`;}
@@ -1113,7 +1110,7 @@ async function loadMyOTRequests(){
   const res=await fetch('/api/overtime/my-requests');const list=await res.json();
   const wrap=document.getElementById('my-ot-list');
   if(!list.length){wrap.innerHTML='<div style="text-align:center;color:var(--muted);font-size:13px;padding:16px">尚無申請記錄</div>';return;}
-  const DAY_LABEL={weekday:'平日',rest_day:'休息日',holiday:'國定假日',special:'例假日'};
+  const DAY_LABEL={weekday:'平日',rest_day:'休息日',holiday:'國定假日',special:'備註兼職人員'};
   wrap.innerHTML=list.map(r=>{
     const sc=OT_SC[r.status]||'var(--muted)';const sl=OT_SL[r.status]||r.status;
     const payStr=r.ot_pay>0?`<div style="font-size:13px;font-weight:700;color:var(--green);margin-top:4px">加班費：$${Number(r.ot_pay).toLocaleString()}</div>`:'';
