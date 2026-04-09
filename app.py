@@ -3625,6 +3625,8 @@ def api_leave_submit():
     leave_type_id = b.get('leave_type_id')
     start_date    = b.get('start_date', '').strip()
     end_date      = b.get('end_date',   '').strip()
+    start_time    = b.get('start_time', '').strip() or None
+    end_time      = b.get('end_time',   '').strip() or None
     start_half    = bool(b.get('start_half', False))
     end_half      = bool(b.get('end_half',   False))
     reason        = b.get('reason', '').strip()
@@ -3634,9 +3636,22 @@ def api_leave_submit():
     if not all([leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+    is_hour_mode = bool(start_time and end_time)
+    if is_hour_mode:
+        from datetime import datetime as _dt
+        try:
+            st = _dt.strptime(start_time, '%H:%M')
+            et = _dt.strptime(end_time,   '%H:%M')
+            hrs = (et - st).seconds / 3600
+            if hrs <= 0:
+                return jsonify({'error': '結束時間需晚於開始時間'}), 400
+            total_days = round(hrs / 8, 2)
+        except Exception:
+            return jsonify({'error': '時間格式錯誤'}), 400
+    else:
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
 
     with get_db() as conn:
         # Check balance for types with limits
@@ -3656,10 +3671,10 @@ def api_leave_submit():
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, reason, substitute_name, document_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+               start_time, end_time, total_days, reason, substitute_name, document_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, reason, substitute, document_id)).fetchone()
+              start_time, end_time, total_days, reason, substitute, document_id)).fetchone()
     return jsonify(leave_req_row(row)), 201
 
 # ── Leave Balance ─────────────────────────────────────────────────
