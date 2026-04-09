@@ -3578,13 +3578,18 @@ def api_leave_request_review(rid):
                 reviewed_at=NOW(), updated_at=NOW()
             WHERE id=%s RETURNING *
         """, (new_status, reviewed_by, review_note, rid)).fetchone()
-        if action == 'approve':
+        old_status = old['status']
+        if action == 'approve' and old_status != 'approved':
             _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
                                   str(old['start_date'])[:4], float(old['total_days']))
+        elif action == 'reject' and old_status == 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days']))
     if row:
         if old.get('start_time') and old.get('end_time'):
             st = str(old['start_time'])[:5]; et = str(old['end_time'])[:5]
-            extra = f"{str(old['start_date'])} {st}～{et}（{float(old['total_days'])*8:.1f} 小時）"
+            hrs = round(float(old['total_days']) * 8, 1)
+            extra = f"{str(old['start_date'])} {st}～{et}（{hrs} 小時）"
         elif str(old['start_date']) == str(old['end_date']):
             extra = f"{str(old['start_date'])} 共 {float(old['total_days'])} 天"
         else:
@@ -3597,9 +3602,13 @@ def api_leave_request_review(rid):
 @require_module('leave')
 def api_leave_request_delete(rid):
     with get_db() as conn:
-        row = conn.execute("DELETE FROM leave_requests WHERE id=%s RETURNING id", (rid,)).fetchone()
-    if not row:
-        return jsonify({'error': '找不到該假單'}), 404
+        old = conn.execute("SELECT * FROM leave_requests WHERE id=%s", (rid,)).fetchone()
+        if not old:
+            return jsonify({'error': '找不到該假單'}), 404
+        conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
+        if old['status'] == 'approved':
+            _update_leave_balance(conn, old['staff_id'], old['leave_type_id'],
+                                  str(old['start_date'])[:4], -float(old['total_days']))
     return jsonify({'deleted': rid})
 
 def _update_leave_balance(conn, staff_id, leave_type_id, year_str, delta_days):
