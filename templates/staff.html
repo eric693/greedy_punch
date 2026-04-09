@@ -1072,7 +1072,9 @@ function updateOTHoursPreview(){
   else{const h1=Math.min(hrs,2).toFixed(1),h2=Math.max(0,hrs-2).toFixed(1);detail=`平日：前${h1}h×1.33 + 後${h2}h×1.67`;}
   el.innerHTML=`<strong>加班時數：${hrs} 小時</strong>　<span style="color:var(--muted)">${detail}</span>`;
 }
+let _otSubmitting = false;
 async function submitOTRequest(){
+  if(_otSubmitting) return;
   const request_date = document.getElementById('ot-date').value;
   const start_time   = document.getElementById('ot-start').value;
   const end_time     = document.getElementById('ot-end').value;
@@ -1091,6 +1093,9 @@ async function submitOTRequest(){
     showToast('時間格式錯誤，請重新選擇','err'); return;
   }
 
+  _otSubmitting = true;
+  const btn = document.querySelector('#panel-overtime .btn-primary');
+  if(btn){ btn.disabled = true; btn.textContent = '送出中...'; }
   try{
     const res = await fetch('/api/overtime/my-requests', {
       method:'POST',
@@ -1104,6 +1109,9 @@ async function submitOTRequest(){
     await loadMyOTRequests();
   }catch(e){
     showToast('網路錯誤，請重試','err');
+  }finally{
+    _otSubmitting = false;
+    if(btn){ btn.disabled = false; btn.textContent = '送出加班申請'; }
   }
 }
 async function loadMyOTRequests(){
@@ -1846,7 +1854,9 @@ function _onLeaveTypeChange() {
   previewLeaveStaff();
 }
 
+let _leaveSubmitting = false;
 async function submitLeaveRequest() {
+  if (_leaveSubmitting) return;
   const leave_type_id = document.getElementById('leave-type-sel').value;
   const reason        = document.getElementById('leave-reason').value.trim();
   const substitute    = document.getElementById('leave-sub').value.trim();
@@ -1876,6 +1886,9 @@ async function submitLeaveRequest() {
     body = { leave_type_id: parseInt(leave_type_id), start_date, end_date, start_half, end_half, reason, substitute_name: substitute, document_id: _leaveCertDocId };
   }
 
+  _leaveSubmitting = true;
+  const btn = document.querySelector('#panel-leave .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = '送出中...'; }
   try {
     const res  = await fetch('/api/leave/my-requests', {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -1892,7 +1905,12 @@ async function submitLeaveRequest() {
     document.getElementById('leave-cert-input').value = '';
     await loadMyLeaveBalance();
     await loadMyLeaveHistory();
-  } catch(e) { showToast('網路錯誤', 'err'); }
+  } catch(e) {
+    showToast('網路錯誤', 'err');
+  } finally {
+    _leaveSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = '送出請假申請'; }
+  }
 }
 
 async function loadMyLeaveHistory() {

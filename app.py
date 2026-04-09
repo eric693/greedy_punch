@@ -3687,10 +3687,17 @@ def api_leave_submit():
         lt = conn.execute("SELECT * FROM leave_types WHERE id=%s", (leave_type_id,)).fetchone()
         if lt and lt['max_days'] is not None:
             year = start_date[:4]
-            bal  = conn.execute("""
+            # 確保餘額列存在，再用 FOR UPDATE 鎖定，防止 race condition
+            conn.execute("""
+                INSERT INTO leave_balances (staff_id, leave_type_id, year, total_days, used_days)
+                VALUES (%s, %s, %s, 0, 0)
+                ON CONFLICT (staff_id, leave_type_id, year) DO NOTHING
+            """, (sid, leave_type_id, year))
+            bal = conn.execute("""
                 SELECT COALESCE(used_days,0) as used
                 FROM leave_balances
                 WHERE staff_id=%s AND leave_type_id=%s AND year=%s
+                FOR UPDATE
             """, (sid, leave_type_id, year)).fetchone()
             used = float(bal['used']) if bal else 0.0
             if used + total_days > float(lt['max_days']):
