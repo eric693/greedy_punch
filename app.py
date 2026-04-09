@@ -3520,23 +3520,41 @@ def api_leave_request_admin_create():
     reason        = b.get('reason', '').strip()
     status        = b.get('status', 'approved')
 
+    start_time = b.get('start_time', '').strip() or None
+    end_time   = b.get('end_time', '').strip() or None
+
     if not all([sid, leave_type_id, start_date, end_date]):
         return jsonify({'error': '缺少必要欄位'}), 400
 
-    total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
-    if total_days <= 0:
-        return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
+    if start_time and end_time:
+        from datetime import time as _t
+        try:
+            sh, sm = map(int, start_time.split(':'))
+            eh, em = map(int, end_time.split(':'))
+            st = _t(sh, sm); et = _t(eh, em)
+            from datetime import datetime as _dt
+            hrs = (_dt.combine(_dt.today(), et) - _dt.combine(_dt.today(), st)).seconds / 3600
+            if hrs <= 0:
+                return jsonify({'error': '結束時間需晚於開始時間'}), 400
+            total_days = round(hrs / 8, 2)
+        except Exception:
+            return jsonify({'error': '時間格式錯誤'}), 400
+    else:
+        total_days = _calc_leave_days(start_date, end_date, start_half, end_half)
+        if total_days <= 0:
+            return jsonify({'error': '請假天數不合理，請檢查日期'}), 400
 
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO leave_requests
               (staff_id, leave_type_id, start_date, end_date, start_half, end_half,
-               total_days, reason, status, reviewed_by, reviewed_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+               start_time, end_time, total_days, reason, status, reviewed_by, reviewed_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
               CASE WHEN %s='approved' THEN NOW() ELSE NULL END)
             RETURNING *
         """, (sid, leave_type_id, start_date, end_date, start_half, end_half,
-              total_days, reason, status, b.get('reviewed_by','管理員'), status)).fetchone()
+              start_time, end_time, total_days, reason, status,
+              b.get('reviewed_by','管理員'), status)).fetchone()
         if status == 'approved':
             _update_leave_balance(conn, sid, leave_type_id, start_date[:4], total_days)
     return jsonify(leave_req_row(row)), 201
@@ -3579,7 +3597,9 @@ def api_leave_request_review(rid):
 @require_module('leave')
 def api_leave_request_delete(rid):
     with get_db() as conn:
-        conn.execute("DELETE FROM leave_requests WHERE id=%s", (rid,))
+        row = conn.execute("DELETE FROM leave_requests WHERE id=%s RETURNING id", (rid,)).fetchone()
+    if not row:
+        return jsonify({'error': '找不到該假單'}), 404
     return jsonify({'deleted': rid})
 
 def _update_leave_balance(conn, staff_id, leave_type_id, year_str, delta_days):

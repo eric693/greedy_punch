@@ -5112,8 +5112,8 @@ function renderLeaveRequests() {
             return `<span style="margin-left:6px;padding:1px 7px;border-radius:10px;font-size:11px;background:#f0f2f8;color:var(--muted)">餘額 ${bal.remain.toFixed(1)} 天</span>`;
           })()}
           <div style="font-size:12px;color:var(--muted);margin-top:3px">
-            ${r.start_date}${sHalf} ~ ${r.end_date}${eHalf}
-            &nbsp;|&nbsp; <strong>${r.total_days} 天</strong>
+            ${r.start_time&&r.end_time ? `${r.start_date} ${r.start_time}～${r.end_time}` : `${r.start_date}${sHalf} ~ ${r.end_date}${eHalf}`}
+            &nbsp;|&nbsp; <strong>${r.start_time&&r.end_time ? `${(r.total_days*8).toFixed(1)} 小時` : `${r.total_days} 天`}</strong>
             &nbsp;|&nbsp; 薪資倍率：${r.pay_rate===1?'全薪':r.pay_rate===0?'無薪':r.pay_rate+'倍'}
           </div>
         </div>
@@ -5252,7 +5252,7 @@ function openLeaveReview(id) {
   document.getElementById('lrm-info').innerHTML = `
     <strong>${escHtml(r.staff_name)}</strong>
     <span style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${r.leave_color||'#4a7bda'}22;color:${r.leave_color||'#4a7bda'}">${escHtml(r.leave_type_name)}</span><br>
-    ${r.start_date}${sh} ~ ${r.end_date}${eh}　<strong>${r.total_days} 天</strong><br>
+    ${r.start_time&&r.end_time ? `${r.start_date} ${r.start_time}～${r.end_time}　<strong>${(r.total_days*8).toFixed(1)} 小時</strong>` : `${r.start_date}${sh} ~ ${r.end_date}${eh}　<strong>${r.total_days} 天</strong>`}<br>
     <span style="color:var(--muted)">${escHtml(r.reason||'（無說明）')}</span>${balHtml}`;
   const certSec  = document.getElementById('lrm-cert-section');
   const certLink = document.getElementById('lrm-cert-link');
