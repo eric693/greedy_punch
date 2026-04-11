@@ -318,6 +318,9 @@ def init_db():
             created_at      TIMESTAMPTZ DEFAULT NOW(),
             last_login_at   TIMESTAMPTZ
         )""",
+        "CREATE INDEX IF NOT EXISTS idx_punch_records_staff_punched ON punch_records(staff_id, punched_at)",
+        "CREATE INDEX IF NOT EXISTS idx_shift_assignments_staff_date ON shift_assignments(staff_id, shift_date)",
+        "CREATE INDEX IF NOT EXISTS idx_leave_requests_staff_status ON leave_requests(staff_id, status)",
     ]
     for sql in migrations:
         try:
@@ -992,7 +995,13 @@ def api_punch_my_records():
 @login_required
 def api_punch_staff_list():
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM punch_staff ORDER BY name").fetchall()
+        rows = conn.execute("""
+            SELECT id, name, username, employee_code, department, position_title,
+                   role, active, hire_date, birth_date, line_user_id,
+                   salary_type, daily_hours, vacation_quota,
+                   created_at, password_plain
+            FROM punch_staff ORDER BY name
+        """).fetchall()
     return jsonify([punch_staff_row(r) for r in rows])
 
 @app.route('/api/punch/staff', methods=['POST'])
@@ -4383,7 +4392,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'staff_id':           staff['id'],
         'month':              month,
         'salary_type':        salary_type,
-        'base_salary':        base_salary if salary_type == 'monthly' else 0,
+        'base_salary':        base_salary if salary_type == 'monthly' else hourly_base_pay,
         'hourly_rate':        hourly_rate if salary_type == 'hourly' else 0,
         'hourly_base_pay':    hourly_base_pay if salary_type == 'hourly' else 0,
         'actual_work_hours':  actual_work_hours if salary_type == 'hourly' else 0,
@@ -8285,20 +8294,29 @@ def api_bank_import():
     def _parse_amount(s):
         import re
         s = re.sub(r'[,$\s]', '', str(s).strip())
-        try: return float(s)
-        except: return None
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
 
     inserted = 0
+    skipped = []
     with get_db() as conn:
-        for row in rows_data:
+        for row_idx, row in enumerate(rows_data, start=1):
             if len(row) < 2: continue
             date_str = _parse_date(row[0])
-            if not date_str: continue
+            if not date_str:
+                skipped.append({'row': row_idx, 'reason': f'日期格式無法解析：{row[0]}'})
+                continue
             desc = row[1].strip() if len(row) > 1 else ''
             # Format: date, desc, debit, credit  OR  date, desc, amount
             if len(row) >= 4:
                 debit  = _parse_amount(row[2])
                 credit = _parse_amount(row[3])
+                if row[2].strip() and debit is None:
+                    skipped.append({'row': row_idx, 'reason': f'借方金額格式錯誤：{row[2]}'})
+                if row[3].strip() and credit is None:
+                    skipped.append({'row': row_idx, 'reason': f'貸方金額格式錯誤：{row[3]}'})
                 if debit and debit > 0:
                     conn.execute("""INSERT INTO bank_statements
                         (account_name,txn_date,amount,txn_type,description,import_batch)
@@ -8313,14 +8331,17 @@ def api_bank_import():
                     inserted += 1
             elif len(row) >= 3:
                 amt = _parse_amount(row[2])
-                if amt is not None and amt != 0:
+                if amt is None:
+                    skipped.append({'row': row_idx, 'reason': f'金額格式錯誤：{row[2]}'})
+                    continue
+                if amt != 0:
                     txn_type = 'credit' if amt > 0 else 'debit'
                     conn.execute("""INSERT INTO bank_statements
                         (account_name,txn_date,amount,txn_type,description,import_batch)
                         VALUES (%s,%s,%s,%s,%s,%s)
                     """, (account_name, date_str, abs(amt), txn_type, desc, import_batch))
                     inserted += 1
-    return jsonify({'inserted': inserted, 'batch': import_batch})
+    return jsonify({'inserted': inserted, 'batch': import_batch, 'skipped': skipped})
 
 @app.route('/api/finance/bank/statements', methods=['GET'])
 @require_module('finance')
