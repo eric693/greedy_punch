@@ -6413,6 +6413,92 @@ def api_auto_generate_schedule():
     })
 
 
+# ─── Monthly Salary Auto-Generate Scheduler ───────────────────────────────────
+
+def _job_auto_generate_salary():
+    """
+    每月 1 日 02:00 (TW) 自動產生上個月薪資草稿。
+    使用 pg_try_advisory_lock 確保多 worker 環境只執行一次。
+    """
+    from datetime import date as _dj, timedelta as _tdj
+    import json as _jj
+
+    # 取上個月 YYYY-MM
+    today  = _dj.today()
+    first  = today.replace(day=1)
+    last_m = (first - _tdj(days=1))
+    month  = last_m.strftime('%Y-%m')
+
+    LOCK_KEY = 202604011  # 任意唯一整數，代表「薪資自動產生」鎖
+
+    try:
+        with get_db() as conn:
+            # 嘗試取得 advisory lock（非阻塞），失敗代表另一 worker 已在執行
+            locked = conn.execute(
+                "SELECT pg_try_advisory_lock(%s) AS ok", (LOCK_KEY,)
+            ).fetchone()['ok']
+            if not locked:
+                return  # 其他 worker 已執行，跳過
+
+            try:
+                staff_list = conn.execute(
+                    "SELECT * FROM punch_staff WHERE active=TRUE"
+                ).fetchall()
+                generated = 0
+                for staff in staff_list:
+                    data      = _auto_generate_salary(conn, dict(staff), month)
+                    items_json = _jj.dumps(data['items'], ensure_ascii=False)
+                    conn.execute("""
+                        INSERT INTO salary_records
+                          (staff_id, month, base_salary, insured_salary, work_days, actual_days,
+                           leave_days, unpaid_days, ot_pay, allowance_total, deduction_total,
+                           net_pay, items, status, updated_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'draft',NOW())
+                        ON CONFLICT (staff_id, month) DO UPDATE
+                          SET base_salary=%s, insured_salary=%s, work_days=%s, actual_days=%s,
+                              leave_days=%s, unpaid_days=%s, ot_pay=%s, allowance_total=%s,
+                              deduction_total=%s, net_pay=%s, items=%s::jsonb,
+                              status=CASE WHEN salary_records.status='confirmed' THEN 'confirmed' ELSE 'draft' END,
+                              updated_at=NOW()
+                    """, (
+                        data['staff_id'], month, data['base_salary'], data['insured_salary'],
+                        data['work_days'], data['actual_days'], data['leave_days'], data['unpaid_days'],
+                        data['ot_pay'], data['allowance_total'], data['deduction_total'],
+                        data['net_pay'], items_json,
+                        data['base_salary'], data['insured_salary'], data['work_days'], data['actual_days'],
+                        data['leave_days'], data['unpaid_days'], data['ot_pay'], data['allowance_total'],
+                        data['deduction_total'], data['net_pay'], items_json,
+                    ))
+                    generated += 1
+                print(f'[scheduler] 自動薪資產生完成：{month}，共 {generated} 筆', flush=True)
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
+    except Exception as e:
+        print(f'[scheduler] 自動薪資產生失敗：{e}', flush=True)
+
+
+def _start_salary_scheduler():
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    scheduler = BackgroundScheduler(timezone='Asia/Taipei')
+    scheduler.add_job(
+        _job_auto_generate_salary,
+        trigger=CronTrigger(day=1, hour=2, minute=0, timezone='Asia/Taipei'),
+        id='monthly_salary_generate',
+        replace_existing=True,
+    )
+    scheduler.start()
+    print('[scheduler] 每月薪資自動產生排程已啟動（每月 1 日 02:00 TW）', flush=True)
+
+
+# 啟動排程器（gunicorn 多 worker 時每個 worker 都會啟動，由 advisory lock 保證只執行一次）
+try:
+    _start_salary_scheduler()
+except Exception as _sched_err:
+    print(f'[scheduler] 排程啟動失敗：{_sched_err}', flush=True)
+
+
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
