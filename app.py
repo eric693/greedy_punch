@@ -9542,10 +9542,12 @@ def _line_query_salary(staff, user_id):
     try:
         with get_db() as conn:
             row = conn.execute("""
-                SELECT month, net_pay, base_salary, allowance_total, deduction_total, status
-                FROM salary_records
-                WHERE staff_id=%s
-                ORDER BY month DESC LIMIT 1
+                SELECT sr.month, sr.net_pay, sr.base_salary, sr.allowance_total,
+                       sr.deduction_total, sr.status, ps.salary_type, ps.hourly_rate
+                FROM salary_records sr
+                JOIN punch_staff ps ON ps.id = sr.staff_id
+                WHERE sr.staff_id=%s
+                ORDER BY sr.month DESC LIMIT 1
             """, (staff['id'],)).fetchone()
     except Exception as e:
         _send_line_punch(user_id, f'查詢失敗：{e}')
@@ -9554,12 +9556,22 @@ def _line_query_salary(staff, user_id):
         _send_line_punch(user_id, f'📊 {staff["name"]}\n尚無薪資記錄。')
         return
     status_map = {'draft':'草稿', 'confirmed':'已確認', 'paid':'已發放'}
+    is_hourly = (row['salary_type'] == 'hourly')
+    if is_hourly:
+        detail_lines = (
+            f'應領（含加班）：NT$ {float(row["allowance_total"] or 0):,.0f}\n'
+            f'扣除：NT$ {float(row["deduction_total"] or 0):,.0f}\n'
+        )
+    else:
+        detail_lines = (
+            f'底薪：NT$ {float(row["base_salary"] or 0):,.0f}\n'
+            f'津貼：NT$ {float(row["allowance_total"] or 0):,.0f}\n'
+            f'扣除：NT$ {float(row["deduction_total"] or 0):,.0f}\n'
+        )
     _send_line_punch(user_id,
         f'📊 {staff["name"]} {row["month"]} 薪資\n\n'
-        f'底薪：NT$ {float(row["base_salary"] or 0):,.0f}\n'
-        f'津貼：NT$ {float(row["allowance_total"] or 0):,.0f}\n'
-        f'扣除：NT$ {float(row["deduction_total"] or 0):,.0f}\n'
-        f'━━━━━━━━━━━━\n'
+        + detail_lines
+        + f'━━━━━━━━━━━━\n'
         f'實領：NT$ {float(row["net_pay"] or 0):,.0f}\n'
         f'狀態：{status_map.get(row["status"], row["status"])}\n\n'
         f'詳細資訊請至員工系統薪資單查看。')
@@ -10506,17 +10518,18 @@ def mobile_salary():
     staff_id = int(u['sub'])
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT id, period_year, period_month, base_salary, bonus, deductions,
-                      net_salary, status, paid_at, created_at
-               FROM salary_records WHERE staff_id=%s ORDER BY period_year DESC, period_month DESC LIMIT 12""",
+            """SELECT id, month, base_salary, allowance_total AS bonus,
+                      deduction_total AS deductions, net_pay AS net_salary,
+                      status, confirmed_at AS paid_at, created_at
+               FROM salary_records WHERE staff_id=%s ORDER BY month DESC LIMIT 12""",
             (staff_id,)
         ).fetchall()
     data = []
     for r in rows:
         d = dict(r)
-        for k in ('paid_at','created_at'):
+        for k in ('paid_at', 'created_at'):
             if d.get(k): d[k] = str(d[k])
-        for k in ('base_salary','bonus','deductions','net_salary'):
+        for k in ('base_salary', 'bonus', 'deductions', 'net_salary'):
             if d.get(k) is not None: d[k] = float(d[k])
         data.append(d)
     return jsonify(data)
