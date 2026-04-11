@@ -4235,7 +4235,9 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         # 時薪制加班費（從打卡計算，若無申請記錄則估算）
         # 先用「加班申請」核准金額；若為 0 則嘗試從工時估算
         if ot_pay == 0 and actual_work_hours > 0:
-            # 每天超過 daily_hours 的部分算加班
+            # 每天超過 daily_hours 的部分算加班溢價
+            # hourly_base_pay 已含全部工時（含加班）× 基本時薪，
+            # 故此處只補溢價部分（× (rate - 1.0)），避免雙重計算
             for pd in punch_details:
                 overtime_h = max(0.0, pd['net_hours'] - daily_hours)
                 if overtime_h > 0:
@@ -4243,7 +4245,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                     h2 = max(0.0, overtime_h - 2.0)
                     rate1 = float(staff.get('ot_rate1') or 1.33)
                     rate2 = float(staff.get('ot_rate2') or 1.67)
-                    ot_pay += round(hourly_rate * (h1 * rate1 + h2 * rate2), 2)
+                    ot_pay += round(hourly_rate * (h1 * (rate1 - 1.0) + h2 * (rate2 - 1.0)), 2)
 
         # 時薪制的保險費以 insured_salary 為準（若未設定則用月薪換算）
         if insured_salary == 0:
