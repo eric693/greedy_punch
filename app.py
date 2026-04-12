@@ -2415,7 +2415,7 @@ def api_shift_assignment_create():
                 for month in months:
                     row = conn.execute("""
                         SELECT array_agg(DISTINCT d) as dates
-                        FROM schedule_requests, unnest(dates) d
+                        FROM schedule_requests, jsonb_array_elements_text(dates) d
                         WHERE staff_id=%s AND month=%s AND status IN ('approved','pending')
                     """, (sid, month)).fetchone()
                     if row:
