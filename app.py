@@ -6276,10 +6276,10 @@ def api_auto_generate_schedule():
 
         # 已核准排休
         sched_rows = conn.execute("""
-            SELECT staff_id, requested_dates
+            SELECT staff_id, dates
             FROM schedule_requests
             WHERE status='approved'
-              AND to_char(created_at,'YYYY-MM')=%s
+              AND month=%s
         """, (month,)).fetchall()
 
         # 現有班表
@@ -6298,7 +6298,7 @@ def api_auto_generate_schedule():
             off_days.add((lr['staff_id'], str(cur)))
             cur += _tdag(days=1)
     for sr in sched_rows:
-        rdates = sr['requested_dates']
+        rdates = sr['dates']
         if isinstance(rdates, str):
             try: rdates = _json.loads(rdates)
             except: rdates = []
