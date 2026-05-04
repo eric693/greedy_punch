@@ -976,7 +976,8 @@ def api_punch_my_records():
         mf_mr = _dmr(y_mr, m_mr, 1)
         ml_mr = _dmr(y_mr, m_mr, _calmr.monthrange(y_mr, m_mr)[1])
         lv_rows_mr = conn.execute("""
-            SELECT lr.start_date, lr.end_date, lt.name as leave_name, lt.pay_rate
+            SELECT lr.start_date, lr.end_date, lr.start_half, lr.end_half,
+                   lt.name as leave_name, lt.pay_rate
             FROM leave_requests lr
             JOIN leave_types lt ON lt.id=lr.leave_type_id
             WHERE lr.staff_id=%s AND lr.status='approved'
@@ -995,8 +996,9 @@ def api_punch_my_records():
             if ds not in leave_by_date:
                 leave_by_date[ds] = []
             pr = float(_lr['pay_rate'])
+            is_half = (cur == _sd and bool(_lr['start_half'])) or (cur == _ed and bool(_lr['end_half']))
             leave_by_date[ds].append({
-                'leave_name': _lr['leave_name'],
+                'leave_name': _lr['leave_name'] + ('（半天）' if is_half else ''),
                 'pay_label':  PAY_LBL_MR.get(pr, f'{int(pr*100)}%薪'),
                 'pay_rate':   pr,
             })
@@ -1300,6 +1302,7 @@ def api_punch_summary():
         ml_ps = _dps(y_ps, m_ps, _calps.monthrange(y_ps, m_ps)[1])
         lv_rows_ps = conn.execute("""
             SELECT lr.staff_id, lr.start_date, lr.end_date,
+                   lr.start_half, lr.end_half,
                    lt.name as leave_name, lt.pay_rate
             FROM leave_requests lr
             JOIN leave_types lt ON lt.id=lr.leave_type_id
@@ -1321,8 +1324,9 @@ def api_punch_summary():
             if key not in leave_date_map:
                 leave_date_map[key] = []
             pr = float(_lr['pay_rate'])
+            is_half = (cur == _sd and bool(_lr['start_half'])) or (cur == _ed and bool(_lr['end_half']))
             leave_date_map[key].append({
-                'leave_name': _lr['leave_name'],
+                'leave_name': _lr['leave_name'] + ('（半天）' if is_half else ''),
                 'pay_label':  PAY_LBL_PS.get(pr, f'{int(pr*100)}%薪'),
                 'pay_rate':   pr,
             })
@@ -4933,14 +4937,14 @@ def api_salary_record_get(rid):
         """, (row['staff_id'], _month_last, _month_first)).fetchall()
         PAY_LBL = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
         _leave_details = []
+        from datetime import timedelta as _tdg
         for _lr in _leave_rows:
             _sd = _lr['start_date'] if isinstance(_lr['start_date'], _dg) else _dg.fromisoformat(str(_lr['start_date']))
             _ed = _lr['end_date']   if isinstance(_lr['end_date'],   _dg) else _dg.fromisoformat(str(_lr['end_date']))
-            _sd2 = max(_sd, _month_first); _ed2 = min(_ed, _month_last)
             if _sd >= _month_first and _ed <= _month_last:
                 _d5 = float(_lr['total_days'])
             else:
-                from datetime import timedelta as _tdg
+                _sd2 = max(_sd, _month_first); _ed2 = min(_ed, _month_last)
                 _d5 = sum(1 for i in range((_ed2-_sd2).days+1)
                           if (_sd2+_tdg(days=i)).weekday()!=6)
             if _d5 <= 0: continue
@@ -5614,7 +5618,9 @@ def api_export_attendance_summary():
             try:
                 ci = r['ci_ts'] if hasattr(r['ci_ts'], 'timestamp') else _dtx.fromisoformat(str(r['ci_ts']))
                 co = r['co_ts'] if hasattr(r['co_ts'], 'timestamp') else _dtx.fromisoformat(str(r['co_ts']))
-                dur_h = round((co - ci).total_seconds() / 3600, 2)
+                gross_m = (co - ci).total_seconds() / 60
+                brk_m = 60.0 if gross_m >= 540 else (30.0 if gross_m >= 240 else 0.0)
+                dur_h = round(max(0, gross_m - brk_m) / 60, 2)
             except Exception:
                 pass
         vals = [r['employee_code'] or '', r['name'], r['department'] or '', r['role'] or '',
@@ -11359,8 +11365,9 @@ def mobile_attendance():
         if clock_in and clock_out:
             ci = _dt.strptime(clock_in,  '%H:%M')
             co = _dt.strptime(clock_out, '%H:%M')
-            diff = (co - ci).seconds / 3600
-            hours = round(diff, 2)
+            gross_m = (co - ci).seconds / 60
+            brk_m = 60 if gross_m >= 540 else (30 if gross_m >= 240 else 0)
+            hours = round(max(0, gross_m - brk_m) / 60, 2)
         result.append({'date': day, 'clock_in': clock_in, 'clock_out': clock_out,
                        'hours': hours, 'records': records})
     return jsonify(result)
