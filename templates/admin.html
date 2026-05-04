@@ -429,8 +429,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
       <div class="card">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>補打卡</th></tr></thead>
-            <tbody id="sum-tbody"><tr><td colspan="6" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr></tbody>
+            <thead><tr><th>日期</th><th>員工</th><th>上班</th><th>下班</th><th>工時</th><th>假日/假別</th><th>補打卡</th></tr></thead>
+            <tbody id="sum-tbody"><tr><td colspan="7" class="empty-state"><div class="empty-state-text">請選擇月份</div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3881,6 +3881,7 @@ async function loadPunchSummary() {
     tb.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-state-text">該月無打卡記錄</div></td></tr>';
     return;
   }
+  const PAY_COLOR_SUM = {'全薪':'var(--green)','半薪':'var(--accent)','無薪':'var(--red)'};
   tb.innerHTML = data.map(r => {
     const ci = r.clock_in  ? r.clock_in.slice(11,16)  : '<span style="color:var(--muted)">—</span>';
     const co = r.clock_out ? r.clock_out.slice(11,16) : '<span style="color:var(--muted)">—</span>';
@@ -3889,12 +3890,22 @@ async function loadPunchSummary() {
       const h = Math.floor(r.duration_min / 60), m = r.duration_min % 60;
       dur = h > 0 ? `${h}h ${m}m` : `${m}m`;
     }
+    // 假日 / 假別 badges
+    let tagHtml = '';
+    if (r.holiday_name) {
+      tagHtml += `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700;background:#fee2e2;color:var(--red);margin:1px 2px 1px 0">🎌 ${escHtml(r.holiday_name)}</span>`;
+    }
+    (r.leaves||[]).forEach(lv => {
+      const c = PAY_COLOR_SUM[lv.pay_label]||'var(--muted)';
+      tagHtml += `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#f3f0ff;color:${c};margin:1px 2px 1px 0">${escHtml(lv.leave_name)} <span style="font-size:10px">${escHtml(lv.pay_label)}</span></span>`;
+    });
     return `<tr>
       <td style="font-family:'DM Mono',monospace;font-size:12px;white-space:nowrap">${r.work_date||''}</td>
       <td style="font-weight:600">${escHtml(r.staff_name)}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--green)">${ci}</td>
       <td style="font-family:'DM Mono',monospace;color:var(--red)">${co}</td>
       <td style="font-family:'DM Mono',monospace;font-weight:600">${dur}</td>
+      <td style="font-size:12px">${tagHtml||'<span style="color:var(--muted)">—</span>'}</td>
       <td>${r.has_manual ? '<span class="punch-manual-badge">含補打</span>' : ''}</td>
     </tr>`;
   }).join('');

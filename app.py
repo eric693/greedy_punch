@@ -968,6 +968,40 @@ def api_punch_my_records():
               AND to_char(punched_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM') = %s
             ORDER BY punched_at ASC
         """, (sid, month)).fetchall()
+
+        # 當月核准請假
+        from datetime import date as _dmr, timedelta as _tdmr
+        import calendar as _calmr
+        y_mr, m_mr = int(month[:4]), int(month[5:])
+        mf_mr = _dmr(y_mr, m_mr, 1)
+        ml_mr = _dmr(y_mr, m_mr, _calmr.monthrange(y_mr, m_mr)[1])
+        lv_rows_mr = conn.execute("""
+            SELECT lr.start_date, lr.end_date, lt.name as leave_name, lt.pay_rate
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id=lr.leave_type_id
+            WHERE lr.staff_id=%s AND lr.status='approved'
+              AND lr.start_date<=%s AND lr.end_date>=%s
+        """, (sid, ml_mr, mf_mr)).fetchall()
+
+    PAY_LBL_MR = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
+    # {date_str: [{leave_name, pay_label}]}
+    leave_by_date = {}
+    for _lr in lv_rows_mr:
+        _sd = _lr['start_date'] if isinstance(_lr['start_date'], _dmr) else _dmr.fromisoformat(str(_lr['start_date']))
+        _ed = _lr['end_date']   if isinstance(_lr['end_date'],   _dmr) else _dmr.fromisoformat(str(_lr['end_date']))
+        cur = max(_sd, mf_mr)
+        while cur <= min(_ed, ml_mr):
+            ds = cur.isoformat()
+            if ds not in leave_by_date:
+                leave_by_date[ds] = []
+            pr = float(_lr['pay_rate'])
+            leave_by_date[ds].append({
+                'leave_name': _lr['leave_name'],
+                'pay_label':  PAY_LBL_MR.get(pr, f'{int(pr*100)}%薪'),
+                'pay_rate':   pr,
+            })
+            cur += _tdmr(days=1)
+
     from datetime import timezone as _tz2, timedelta as _tdb
     TW = _tz2(_tdb(hours=8))
     LABEL = {'in': '上班', 'out': '下班', 'break_out': '休息開始', 'break_in': '休息結束'}
@@ -990,7 +1024,7 @@ def api_punch_my_records():
             'location_name': r['location_name'] or '',
             'is_manual':     bool(r['is_manual']),
         })
-    return jsonify({'month': month, 'records': result})
+    return jsonify({'month': month, 'records': result, 'leaves': leave_by_date})
 
 # ── Admin: Staff CRUD ─────────────────────────────────────────────
 
@@ -1251,6 +1285,49 @@ def api_punch_summary():
             ORDER BY pr.staff_id, pr.punched_at ASC
         """, (month, month)).fetchall()
 
+        # 當月國定假日 {date_str: name}
+        hol_rows_ps = conn.execute("""
+            SELECT date, name FROM public_holidays
+            WHERE TO_CHAR(date,'YYYY-MM')=%s
+        """, (month,)).fetchall()
+        holiday_map_ps = {str(r['date']): r['name'] for r in hol_rows_ps}
+
+        # 當月所有員工核准請假 {staff_id: [(start, end, leave_name, pay_rate)]}
+        from datetime import date as _dps
+        import calendar as _calps
+        y_ps, m_ps = int(month[:4]), int(month[5:])
+        mf_ps = _dps(y_ps, m_ps, 1)
+        ml_ps = _dps(y_ps, m_ps, _calps.monthrange(y_ps, m_ps)[1])
+        lv_rows_ps = conn.execute("""
+            SELECT lr.staff_id, lr.start_date, lr.end_date,
+                   lt.name as leave_name, lt.pay_rate
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id=lr.leave_type_id
+            WHERE lr.status='approved'
+              AND lr.start_date<=%s AND lr.end_date>=%s
+        """, (ml_ps, mf_ps)).fetchall()
+
+    PAY_LBL_PS = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
+    from datetime import timedelta as _tdps
+    # 建立 {(staff_id, date_str): [leave_name...]}
+    leave_date_map = {}
+    for _lr in lv_rows_ps:
+        _sd = _lr['start_date'] if isinstance(_lr['start_date'], _dps) else _dps.fromisoformat(str(_lr['start_date']))
+        _ed = _lr['end_date']   if isinstance(_lr['end_date'],   _dps) else _dps.fromisoformat(str(_lr['end_date']))
+        _sd2 = max(_sd, mf_ps); _ed2 = min(_ed, ml_ps)
+        cur = _sd2
+        while cur <= _ed2:
+            key = (_lr['staff_id'], cur.isoformat())
+            if key not in leave_date_map:
+                leave_date_map[key] = []
+            pr = float(_lr['pay_rate'])
+            leave_date_map[key].append({
+                'leave_name': _lr['leave_name'],
+                'pay_label':  PAY_LBL_PS.get(pr, f'{int(pr*100)}%薪'),
+                'pay_rate':   pr,
+            })
+            cur += _tdps(days=1)
+
     staff_names = {r['staff_id']: r['staff_name'] for r in rows}
     day_map = _shift_aware_day_map(rows, TW_TZ)
 
@@ -1271,7 +1348,6 @@ def api_punch_summary():
             ci = _dt2.fromisoformat(clock_in)
             co = _dt2.fromisoformat(clock_out)
             gross_min = max(0, int((co - ci).total_seconds() / 60))
-            # 勞基法第35條：工時>=4小時至少休息30分鐘
             brk = 0.0
             for bo in bucket['break_outs']:
                 matched = [bi for bi in bucket['break_ins'] if bi > bo]
@@ -1283,14 +1359,16 @@ def api_punch_summary():
                 brk = max(brk, 30)
             duration_min = max(0, int(gross_min - brk))
         result.append({
-            'staff_id':    sid,
-            'staff_name':  staff_names.get(sid, ''),
-            'work_date':   ds,
-            'clock_in':    clock_in,
-            'clock_out':   clock_out,
-            'punch_count': punch_count,
-            'has_manual':  bucket['has_manual'],
+            'staff_id':     sid,
+            'staff_name':   staff_names.get(sid, ''),
+            'work_date':    ds,
+            'clock_in':     clock_in,
+            'clock_out':    clock_out,
+            'punch_count':  punch_count,
+            'has_manual':   bucket['has_manual'],
             'duration_min': duration_min,
+            'holiday_name': holiday_map_ps.get(ds, ''),
+            'leaves':       leave_date_map.get((sid, ds), []),
         })
     return jsonify(result)
 
