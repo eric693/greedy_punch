@@ -2163,6 +2163,42 @@ function renderPayslip(data, wrap) {
         </tbody>
       </table>
     </div>
+  </div>` : ''}
+
+  ${data.leave_details && data.leave_details.length ? `
+  <!-- 請假明細 -->
+  <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden;margin-bottom:14px">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:#8b5cf6">📋 請假明細</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:var(--bg)">
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">假別</th>
+          <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border)">天數</th>
+          <th style="padding:8px 12px;text-align:center;border-bottom:1px solid var(--border)">薪資</th>
+          <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">區間</th>
+        </tr></thead>
+        <tbody>
+          ${data.leave_details.map(lv => {
+            const pc = lv.pay_label==='全薪'?'var(--green)':lv.pay_label==='無薪'?'var(--red)':'var(--accent)';
+            return `<tr style="border-bottom:1px solid #f0f2f8">
+              <td style="padding:6px 12px;font-weight:600">${esc(lv.leave_name)}</td>
+              <td style="padding:6px 12px;text-align:center;font-family:'DM Mono',monospace">${lv.days}</td>
+              <td style="padding:6px 12px;text-align:center;font-weight:700;color:${pc}">${esc(lv.pay_label)}</td>
+              <td style="padding:6px 12px;color:var(--muted)">${lv.start_date}${lv.start_date!==lv.end_date?' ～ '+lv.end_date:''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>` : ''}
+
+  ${data.holiday_dates && data.holiday_dates.length ? `
+  <!-- 國定假日 -->
+  <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden;margin-bottom:14px">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--red)">🎌 本月國定假日（${data.holiday_dates.length} 天）</div>
+    <div style="padding:10px 16px;display:flex;flex-wrap:wrap;gap:6px 16px">
+      ${data.holiday_dates.map(h=>`<span style="font-size:12px;color:var(--muted)"><span style="font-family:'DM Mono',monospace;color:var(--red)">${h.date.slice(5)}</span> ${esc(h.name)}</span>`).join('')}
+    </div>
   </div>` : ''}`;
 
   wrap.innerHTML = html;

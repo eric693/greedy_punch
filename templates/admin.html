@@ -5719,12 +5719,44 @@ async function openSalDetail(id) {
       </div>
     </div>`;
   }
+  // ── 假別明細區塊 ──────────────────────────────────────────────
+  let leaveDetailBlock = '';
+  if (data.leave_details && data.leave_details.length) {
+    const PAY_COLOR = {'全薪':'var(--green)','半薪':'var(--accent)','無薪':'var(--red)'};
+    leaveDetailBlock = `<div style="margin-top:10px">
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;margin-bottom:6px">📋 請假明細</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr style="background:var(--bg)">
+          <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">假別</th>
+          <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">天數</th>
+          <th style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">薪資</th>
+          <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">區間</th>
+        </tr>
+        ${data.leave_details.map(lv=>`<tr style="border-bottom:1px solid #f0f2f8">
+          <td style="padding:4px 8px;font-weight:600">${escHtml(lv.leave_name)}</td>
+          <td style="padding:4px 8px;text-align:center;font-family:'DM Mono',monospace">${lv.days}</td>
+          <td style="padding:4px 8px;text-align:center;font-weight:600;color:${PAY_COLOR[lv.pay_label]||'var(--text)'}">${escHtml(lv.pay_label)}</td>
+          <td style="padding:4px 8px;color:var(--muted);font-size:11px">${lv.start_date}${lv.start_date!==lv.end_date?' ～ '+lv.end_date:''}</td>
+        </tr>`).join('')}
+      </table>
+    </div>`;
+  }
+  // ── 國定假日區塊 ───────────────────────────────────────────────
+  let holidayBlock = '';
+  if (data.holiday_dates && data.holiday_dates.length) {
+    holidayBlock = `<div style="margin-top:10px">
+      <div style="font-size:11px;font-weight:700;color:var(--red);margin-bottom:6px">🎌 本月國定假日（${data.holiday_dates.length} 天）</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 12px">
+        ${data.holiday_dates.map(h=>`<span style="font-size:11px;color:var(--muted)"><span style="font-family:'DM Mono',monospace">${h.date.slice(5)}</span> ${escHtml(h.name)}</span>`).join('')}
+      </div>
+    </div>`;
+  }
   const leaveInfo = `<div style="font-size:12px;color:var(--muted);margin-top:4px">
     ${isHourly
       ? `時薪制：實際工時 <strong>${data.actual_work_hours}h</strong> × 時薪 <strong>$${fmtNum(data.hourly_rate)}</strong> = <strong style="color:var(--green)">$${fmtNum(data.hourly_base_pay)}</strong>`
       : `月薪制：出勤 <strong>${data.actual_days}</strong> 天 / 應出勤 <strong>${data.work_days}</strong> 天${(data.absent_days||0)>0?' <span style="color:var(--red);font-size:11px">（缺勤 '+data.absent_days+' 天已扣款）</span>':''}`}
     ${data.ot_pay>0?` &nbsp;|&nbsp; 加班費 <strong style="color:var(--green)">+$${fmtNum(data.ot_pay)}</strong>`:''}
-  </div>${formulaBlock}${hourlyTable}`;
+  </div>${formulaBlock}${leaveDetailBlock}${holidayBlock}${hourlyTable}`;
   let html = `<div style="padding:16px 24px;background:var(--bg);border-bottom:1px solid var(--border)">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
       <div><span style="color:var(--muted)">職員代碼：</span><strong>${escHtml(data.employee_code||'—')}</strong></div>

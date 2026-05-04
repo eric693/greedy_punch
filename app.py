@@ -4557,6 +4557,32 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
 
     net_pay = round(allowance_total - deduction_total, 2)
 
+    # ── 假別明細（供薪資單顯示） ────────────────────────────────
+    PAY_LABEL5 = {1.0: '全薪', 0.5: '半薪', 0.0: '無薪'}
+    leave_details = []
+    for r in leave_rows:
+        d5 = _leave_days_in_month(r)
+        if d5 <= 0:
+            continue
+        pr = float(r['pay_rate'])
+        leave_details.append({
+            'leave_name': r['leave_name'],
+            'days':       d5,
+            'pay_rate':   pr,
+            'pay_label':  PAY_LABEL5.get(pr, f'{int(pr*100)}%薪'),
+            'start_date': str(r['start_date']),
+            'end_date':   str(r['end_date']),
+        })
+
+    # ── 當月國定假日 ───────────────────────────────────────────
+    holiday_rows5 = conn.execute("""
+        SELECT date, name FROM public_holidays
+        WHERE TO_CHAR(date,'YYYY-MM')=%s ORDER BY date
+    """, (month,)).fetchall()
+    holiday_dates_list = [
+        {'date': str(r['date']), 'name': r['name']} for r in holiday_rows5
+    ]
+
     return {
         'staff_id':           staff['id'],
         'month':              month,
@@ -4576,7 +4602,9 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
         'deduction_total':    round(deduction_total, 2),
         'net_pay':            net_pay,
         'items':              items,
-        'punch_details':      punch_details,   # 時薪制：每日打卡明細
+        'punch_details':      punch_details,
+        'leave_details':      leave_details,
+        'holiday_dates':      holiday_dates_list,
         'status':             'draft',
     }
 
@@ -4599,15 +4627,60 @@ def api_my_payslip():
             JOIN punch_staff ps ON ps.id = sr.staff_id
             WHERE sr.staff_id = %s AND sr.month = %s
         """, (sid, month)).fetchone()
-    if not row:
-        return jsonify({'error': f'{month} 尚無薪資記錄，請聯絡管理員'}), 404
+        if not row:
+            return jsonify({'error': f'{month} 尚無薪資記錄，請聯絡管理員'}), 404
+        # 時薪制：工時明細
+        _st  = row['salary_type'] or 'monthly'
+        _awk = 0.0; _pd = []
+        if _st == 'hourly':
+            _awk, _, _pd = _calc_punch_hours(conn, sid, month)
+        # 假別明細
+        from datetime import date as _dmp, timedelta as _tdmp
+        import calendar as _calmp
+        y_mp, m_mp = int(month[:4]), int(month[5:])
+        mf = _dmp(y_mp, m_mp, 1)
+        ml = _dmp(y_mp, m_mp, _calmp.monthrange(y_mp, m_mp)[1])
+        lv_rows = conn.execute("""
+            SELECT lr.total_days, lt.pay_rate, lt.name as leave_name,
+                   lr.start_date, lr.end_date
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id=lr.leave_type_id
+            WHERE lr.staff_id=%s AND lr.status='approved'
+              AND lr.start_date<=%s AND lr.end_date>=%s
+        """, (sid, ml, mf)).fetchall()
+        PAY_LBL_MP = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
+        lv_details = []
+        for _lr in lv_rows:
+            _sd = _lr['start_date'] if isinstance(_lr['start_date'], _dmp) else _dmp.fromisoformat(str(_lr['start_date']))
+            _ed = _lr['end_date']   if isinstance(_lr['end_date'],   _dmp) else _dmp.fromisoformat(str(_lr['end_date']))
+            if _sd >= mf and _ed <= ml:
+                _d5 = float(_lr['total_days'])
+            else:
+                _sd2 = max(_sd, mf); _ed2 = min(_ed, ml)
+                _d5 = sum(1 for i in range((_ed2-_sd2).days+1) if (_sd2+_tdmp(days=i)).weekday()!=6)
+            if _d5 <= 0: continue
+            _pr = float(_lr['pay_rate'])
+            lv_details.append({
+                'leave_name': _lr['leave_name'], 'days': _d5, 'pay_rate': _pr,
+                'pay_label':  PAY_LBL_MP.get(_pr, f'{int(_pr*100)}%薪'),
+                'start_date': str(_lr['start_date']), 'end_date': str(_lr['end_date']),
+            })
+        hol_rows_mp = conn.execute("""
+            SELECT date, name FROM public_holidays
+            WHERE TO_CHAR(date,'YYYY-MM')=%s ORDER BY date
+        """, (month,)).fetchall()
+        hol_list = [{'date': str(r['date']), 'name': r['name']} for r in hol_rows_mp]
     d = salary_record_row(row)
     d['staff_name']    = row['staff_name']
     d['staff_role']    = row['staff_role']
     d['employee_code'] = row['employee_code'] or ''
     d['department']    = row['department']    or ''
-    d['salary_type']   = row['salary_type']   or 'monthly'
+    d['salary_type']   = _st
     d['hourly_rate']   = float(row['hourly_rate'] or 0)
+    d['actual_work_hours'] = _awk
+    d['punch_details']     = _pd
+    d['leave_details']     = lv_details
+    d['holiday_dates']     = hol_list
     return jsonify(d)
 
 # ── Salary Items CRUD ─────────────────────────────────────────────
@@ -4756,14 +4829,54 @@ def api_salary_record_get(rid):
             WHERE sr.id=%s
         """, (rid,)).fetchone()
         if not row: return ('', 404)
-        # 時薪制：重算每日工時明細與實際工時（punch_details 未存入 salary_records）
+        _st    = row.get('staff_salary_type') or 'monthly'
+        _month = row['month']
+        # 時薪制：重算每日工時明細
         _actual_work_hours = 0.0
         _punch_details     = []
-        _st = row.get('staff_salary_type') or 'monthly'
         if _st == 'hourly':
             _actual_work_hours, _, _punch_details = _calc_punch_hours(
-                conn, row['staff_id'], row['month']
+                conn, row['staff_id'], _month
             )
+        # 假別明細
+        from datetime import date as _dg
+        _month_first = _dg(int(_month[:4]), int(_month[5:]), 1)
+        import calendar as _calg
+        _month_last  = _dg(int(_month[:4]), int(_month[5:]),
+                           _calg.monthrange(int(_month[:4]), int(_month[5:]))[1])
+        _leave_rows = conn.execute("""
+            SELECT lr.total_days, lt.pay_rate, lt.name as leave_name,
+                   lr.start_date, lr.end_date
+            FROM leave_requests lr
+            JOIN leave_types lt ON lt.id=lr.leave_type_id
+            WHERE lr.staff_id=%s AND lr.status='approved'
+              AND lr.start_date <= %s AND lr.end_date >= %s
+        """, (row['staff_id'], _month_last, _month_first)).fetchall()
+        PAY_LBL = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
+        _leave_details = []
+        for _lr in _leave_rows:
+            _sd = _lr['start_date'] if isinstance(_lr['start_date'], _dg) else _dg.fromisoformat(str(_lr['start_date']))
+            _ed = _lr['end_date']   if isinstance(_lr['end_date'],   _dg) else _dg.fromisoformat(str(_lr['end_date']))
+            _sd2 = max(_sd, _month_first); _ed2 = min(_ed, _month_last)
+            if _sd >= _month_first and _ed <= _month_last:
+                _d5 = float(_lr['total_days'])
+            else:
+                from datetime import timedelta as _tdg
+                _d5 = sum(1 for i in range((_ed2-_sd2).days+1)
+                          if (_sd2+_tdg(days=i)).weekday()!=6)
+            if _d5 <= 0: continue
+            _pr = float(_lr['pay_rate'])
+            _leave_details.append({
+                'leave_name': _lr['leave_name'], 'days': _d5, 'pay_rate': _pr,
+                'pay_label':  PAY_LBL.get(_pr, f'{int(_pr*100)}%薪'),
+                'start_date': str(_lr['start_date']), 'end_date': str(_lr['end_date']),
+            })
+        # 當月國定假日
+        _hol_rows = conn.execute("""
+            SELECT date, name FROM public_holidays
+            WHERE TO_CHAR(date,'YYYY-MM')=%s ORDER BY date
+        """, (_month,)).fetchall()
+        _holiday_dates = [{'date': str(r['date']), 'name': r['name']} for r in _hol_rows]
     d = salary_record_row(row)
     d['staff_name']       = row['staff_name']
     d['staff_role']       = row['staff_role']
@@ -4774,6 +4887,8 @@ def api_salary_record_get(rid):
     if not d.get('hourly_rate'): d['hourly_rate']  = float(row['staff_hourly_rate'] or 0)
     d['actual_work_hours'] = _actual_work_hours
     d['punch_details']     = _punch_details
+    d['leave_details']     = _leave_details
+    d['holiday_dates']     = _holiday_dates
     return jsonify(d)
 
 @app.route('/api/salary/records/<int:rid>', methods=['PUT'])
