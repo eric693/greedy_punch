@@ -1277,7 +1277,9 @@ def api_punch_summary():
                 matched = [bi for bi in bucket['break_ins'] if bi > bo]
                 if matched:
                     brk += (min(matched) - bo).total_seconds() / 60
-            if gross_min >= 240:
+            if gross_min >= 540:
+                brk = max(brk, 60)
+            elif gross_min >= 240:
                 brk = max(brk, 30)
             duration_min = max(0, int(gross_min - brk))
         result.append({
@@ -1368,7 +1370,9 @@ def api_attendance_monthly_stats():
                     matched = [bi for bi in bucket['break_ins'] if bi > bo]
                     if matched:
                         brk += (min(matched) - bo).total_seconds() / 60
-                if diff >= 240:
+                if diff >= 540:
+                    brk = max(brk, 60)
+                elif diff >= 240:
                     brk = max(brk, 30)
                 s['total_minutes'] += int(diff - brk)
 
@@ -4233,7 +4237,9 @@ def _calc_punch_hours(conn, staff_id, month):
             matched = [bi for bi in b_in if bi > bo]
             if matched:
                 break_mins += (min(matched) - bo).total_seconds() / 60
-        if gross_mins >= 240:
+        if gross_mins >= 540:
+            break_mins = max(break_mins, 60.0)
+        elif gross_mins >= 240:
             break_mins = max(break_mins, 30.0)
 
         net_mins = max(0.0, gross_mins - break_mins)
@@ -10701,7 +10707,9 @@ def _line_query_monthly_records(staff, user_id, text):
                     bh, bm_ = map(int, bt.split(':'))
                     eh, em_ = map(int, min(matched).split(':'))
                     brk_mins += (eh * 60 + em_) - (bh * 60 + bm_)
-            if gross >= 240:
+            if gross >= 540:
+                brk_mins = max(brk_mins, 60)
+            elif gross >= 240:
                 brk_mins = max(brk_mins, 30)
             mins = max(0, gross - brk_mins)
             total_mins += mins
