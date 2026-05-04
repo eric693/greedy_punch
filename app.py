@@ -1270,7 +1270,16 @@ def api_punch_summary():
             from datetime import datetime as _dt2
             ci = _dt2.fromisoformat(clock_in)
             co = _dt2.fromisoformat(clock_out)
-            duration_min = max(0, int((co - ci).total_seconds() / 60))
+            gross_min = max(0, int((co - ci).total_seconds() / 60))
+            # 勞基法第35條：工時>=4小時至少休息30分鐘
+            brk = 0.0
+            for bo in bucket['break_outs']:
+                matched = [bi for bi in bucket['break_ins'] if bi > bo]
+                if matched:
+                    brk += (min(matched) - bo).total_seconds() / 60
+            if gross_min >= 240:
+                brk = max(brk, 30)
+            duration_min = max(0, int(gross_min - brk))
         result.append({
             'staff_id':    sid,
             'staff_name':  staff_names.get(sid, ''),
@@ -1354,7 +1363,14 @@ def api_attendance_monthly_stats():
             clock_out = max(bucket['outs'])
             diff = (clock_out - clock_in).total_seconds() / 60
             if diff > 0:
-                s['total_minutes'] += int(diff)
+                brk = 0.0
+                for bo in bucket['break_outs']:
+                    matched = [bi for bi in bucket['break_ins'] if bi > bo]
+                    if matched:
+                        brk += (min(matched) - bo).total_seconds() / 60
+                if diff >= 240:
+                    brk = max(brk, 30)
+                s['total_minutes'] += int(diff - brk)
 
         # 缺打卡
         if has_in and not has_out:
@@ -4038,6 +4054,8 @@ def init_salary_db():
         )""",
         "INSERT INTO salary_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
         "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS pay_date DATE",
+        # 勞退提撥6% 屬雇主強制提撥（不從員工薪資扣），預設停用，需手動指定才生效
+        "UPDATE salary_items SET active=FALSE WHERE name='勞退提撥6%' AND item_type='deduction'",
     ]
     for sql in migrations:
         try:
@@ -4047,27 +4065,29 @@ def init_salary_db():
             print(f"[salary_init] {str(e)[:80]}")
 
     # Seed default salary items
+    # (name, type, formula, amount, color, sort, active)
     defaults = [
-        ('本薪',        'allowance', 'base_salary+service_years*1000', 0,    '#2e9e6b', 1),
-        ('職務加給',    'allowance', '',                                0,    '#0ea5e9', 2),
-        ('全勤獎金',    'allowance', '',                                0,    '#c8a96e', 3),
-        ('獎金',        'allowance', '',                                0,    '#8b5cf6', 4),
-        ('生日禮金',    'allowance', '',                                1000, '#e05c8a', 5),
-        ('勞退6%',      'allowance', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 6),
-        ('病/事/假',    'deduction', '',                                0,    '#8892a4', 7),
-        ('勞保費',      'deduction', 'insured_salary*0.125*0.2',       0,    '#d64242', 8),
-        ('健保費',      'deduction', 'insured_salary*0.0517*0.3',      0,    '#e07b2a', 9),
-        ('勞退提撥6%',  'deduction', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 10),
+        ('本薪',        'allowance', 'base_salary+service_years*1000', 0,    '#2e9e6b', 1,  True),
+        ('職務加給',    'allowance', '',                                0,    '#0ea5e9', 2,  True),
+        ('全勤獎金',    'allowance', '',                                0,    '#c8a96e', 3,  True),
+        ('獎金',        'allowance', '',                                0,    '#8b5cf6', 4,  True),
+        ('生日禮金',    'allowance', '',                                1000, '#e05c8a', 5,  True),
+        ('勞退6%',      'allowance', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 6, True),
+        ('病/事/假',    'deduction', '',                                0,    '#8892a4', 7,  True),
+        ('勞保費',      'deduction', 'insured_salary*0.125*0.2',       0,    '#d64242', 8,  True),
+        ('健保費',      'deduction', 'insured_salary*0.0517*0.3',      0,    '#e07b2a', 9,  True),
+        # 勞退員工自願提撥：雇主強制提撥不從員工薪扣，預設停用，需手動開啟
+        ('勞退提撥6%',  'deduction', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 10, False),
     ]
     try:
         with get_db() as conn:
             cnt = conn.execute("SELECT COUNT(*) as c FROM salary_items").fetchone()['c']
             if cnt == 0:
-                for name, itype, formula, amount, color, sort in defaults:
+                for name, itype, formula, amount, color, sort, active in defaults:
                     conn.execute("""
-                        INSERT INTO salary_items (name,item_type,formula,amount,color,sort_order)
-                        VALUES (%s,%s,%s,%s,%s,%s)
-                    """, (name, itype, formula, amount, color, sort))
+                        INSERT INTO salary_items (name,item_type,formula,amount,color,sort_order,active)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    """, (name, itype, formula, amount, color, sort, active))
     except Exception as e:
         print(f"[salary_seed] {e}")
 
@@ -4207,12 +4227,14 @@ def _calc_punch_hours(conn, staff_id, month):
         work_end   = max(outs)
         gross_mins = (work_end - work_start).total_seconds() / 60
 
-        # 扣除休息時間
+        # 扣除休息時間（勞基法第35條：>=4小時至少30分鐘）
         break_mins = 0.0
         for bo in b_out:
             matched = [bi for bi in b_in if bi > bo]
             if matched:
                 break_mins += (min(matched) - bo).total_seconds() / 60
+        if gross_mins >= 240:
+            break_mins = max(break_mins, 30.0)
 
         net_mins = max(0.0, gross_mins - break_mins)
         net_hrs  = round(net_mins / 60, 2)
@@ -10682,7 +10704,20 @@ def _line_query_monthly_records(staff, user_id, text):
         if clock_in and clock_out:
             ci = _dtm.strptime(f'{ds} {clock_in}',  '%Y-%m-%d %H:%M')
             co = _dtm.strptime(f'{ds} {clock_out}', '%Y-%m-%d %H:%M')
-            mins = max(0, int((co - ci).total_seconds() / 60))
+            gross = max(0, int((co - ci).total_seconds() / 60))
+            # 勞基法第35條：>=4小時至少休息30分鐘
+            brk_mins = 0
+            bouts = [r['time'] for r in recs if r['type'] == 'break_out']
+            bins_ = [r['time'] for r in recs if r['type'] == 'break_in']
+            for bt in bouts:
+                matched = [x for x in bins_ if x > bt]
+                if matched:
+                    bh, bm_ = map(int, bt.split(':'))
+                    eh, em_ = map(int, min(matched).split(':'))
+                    brk_mins += (eh * 60 + em_) - (bh * 60 + bm_)
+            if gross >= 240:
+                brk_mins = max(brk_mins, 30)
+            mins = max(0, gross - brk_mins)
             total_mins += mins
             h, m = divmod(mins, 60)
             dur = f'{h}h{m:02d}' if m else f'{h}h'
