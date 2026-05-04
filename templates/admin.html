@@ -455,8 +455,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div class="card-header"><span class="card-title">打卡記錄</span><span id="rec-count" style="font-size:12px;color:var(--muted)"></span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>時間</th><th>員工</th><th>職稱</th><th>類型</th><th>備註</th><th>補打</th><th>操作</th></tr></thead>
-            <tbody id="rec-tbody"><tr><td colspan="7" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
+            <thead><tr><th>時間</th><th>員工</th><th>職稱</th><th>類型</th><th>假日/假別</th><th>備註</th><th>補打</th><th>操作</th></tr></thead>
+            <tbody id="rec-tbody"><tr><td colspan="8" class="empty-state"><div class="empty-state-text">載入中...</div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3948,14 +3948,30 @@ function clearRecFilter() {
 function renderPunchRecords() {
   const tb = document.getElementById('rec-tbody');
   document.getElementById('rec-count').textContent = `共 ${punchRecords.length} 筆`;
-  if (!punchRecords.length) { tb.innerHTML = '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">無記錄</div></td></tr>'; return; }
+  if (!punchRecords.length) { tb.innerHTML = '<tr><td colspan="8" class="empty-state"><div class="empty-state-text">無記錄</div></td></tr>'; return; }
+  const DAY_TYPE_STYLE = {
+    '例假日':  'background:#fef9c3;color:#92400e',
+    '休息日':  'background:#e0f2fe;color:#0369a1',
+    '國定假日':'background:#fee2e2;color:#b91c1c',
+  };
+  const PAY_COLOR_REC = {'全薪':'var(--green)','半薪':'var(--accent)','無薪':'var(--red)'};
   tb.innerHTML = punchRecords.map(r => {
     const dt = r.punched_at ? r.punched_at.slice(0,16).replace('T',' ') : '';
+    let dayHtml = '';
+    if (r.day_type && DAY_TYPE_STYLE[r.day_type]) {
+      const label = r.day_type === '國定假日' && r.holiday_name ? r.holiday_name : r.day_type;
+      dayHtml += `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;${DAY_TYPE_STYLE[r.day_type]}">${escHtml(label)}</span>`;
+    }
+    (r.leaves||[]).forEach(lv => {
+      const c = PAY_COLOR_REC[lv.pay_label] || 'var(--text)';
+      dayHtml += ` <span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#f0fdf4;color:${c}">${escHtml(lv.leave_name)}</span>`;
+    });
     return `<tr>
       <td style="font-family:'DM Mono',monospace;font-size:12px;white-space:nowrap">${dt}</td>
       <td style="font-weight:600">${escHtml(r.staff_name||'')}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(r.staff_role||'')}</td>
       <td><span style="color:${PUNCH_COLOR[r.punch_type]||'var(--text)'};font-weight:600;font-size:12px">${PUNCH_LABEL[r.punch_type]||r.punch_type}</span></td>
+      <td style="white-space:nowrap">${dayHtml || '<span style="color:var(--muted);font-size:11px">一般</span>'}</td>
       <td style="color:var(--muted);font-size:12px">${escHtml(r.note||'')}</td>
       <td>${r.is_manual ? `<span class="punch-manual-badge">補打 ${escHtml(r.manual_by||'')}</span>` : ''}</td>
       <td style="white-space:nowrap">

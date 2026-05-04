@@ -1173,6 +1173,7 @@ async function loadAttendance(){
     }
     records = data.records || {};
     _leaveByDate = data.leaves || {};
+    window._attShifts = data.shifts || {};
   } catch(e) {
     cal.innerHTML = `<div style="text-align:center;color:var(--red);font-size:13px;padding:24px">${esc(e.message)}</div>`;
     return;
@@ -1183,6 +1184,18 @@ async function loadAttendance(){
   const [y, m] = month.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
   const today = new Date(); today.setHours(0,0,0,0);
+
+  // 依排班夾住打卡時間：回傳 {effIn, effOut} 分鐘數，無排班則原樣
+  function clampToShift(ds, inMins, outMins) {
+    const sh = (window._attShifts || {})[ds];
+    if (!sh) return { effIn: inMins, effOut: outMins };
+    const [sh_h, sh_m] = sh.start.split(':').map(Number);
+    const [se_h, se_m] = sh.end.split(':').map(Number);
+    const shiftStart = sh_h * 60 + sh_m;
+    let   shiftEnd   = se_h * 60 + se_m;
+    if (sh.cross_midnight) shiftEnd += 24 * 60;
+    return { effIn: Math.max(inMins, shiftStart), effOut: Math.min(outMins, shiftEnd) };
+  }
 
   // ── 統計摘要 ──────────────────────────────────────────────
   let totalIn = 0, totalHours = 0, lateCount = 0;
@@ -1196,7 +1209,8 @@ async function loadAttendance(){
       if (inRec && outRec) {
         const [ih, im] = inRec.time.split(':').map(Number);
         const [oh, om] = outRec.time.split(':').map(Number);
-        const gross = (oh * 60 + om) - (ih * 60 + im);
+        const { effIn, effOut } = clampToShift(ds, ih*60+im, oh*60+om);
+        const gross = effOut - effIn;
         if (gross > 0) {
           // 勞基法第35條：>=4小時至少休息30分鐘
           const bouts = recs.filter(r => r.type === 'break_out');
@@ -1349,7 +1363,8 @@ function showDayDetail(ds) {
     if (inRec && outRec) {
       const [ih, im] = inRec.time.split(':').map(Number);
       const [oh, om] = outRec.time.split(':').map(Number);
-      const gross = (oh*60+om) - (ih*60+im);
+      const { effIn, effOut } = clampToShift(ds, ih*60+im, oh*60+om);
+      const gross = effOut - effIn;
       if (gross > 0) {
         // 勞基法第35條：>=4小時至少休息30分鐘
         const bouts = recs.filter(r => r.type === 'break_out');
@@ -1366,7 +1381,7 @@ function showDayDetail(ds) {
         const mins = Math.max(0, gross - brk);
         const h = Math.floor(mins/60), mn = mins%60;
         workHoursStr = `<div style="font-size:12px;color:var(--green);font-weight:700;margin-bottom:12px;padding:8px 12px;background:#f0fdf4;border-radius:8px">
-          ⏱ 工時：${h}小時${mn>0?mn+'分':''}（${inRec.time} ～ ${outRec.time}）</div>`;
+          工時：${h}小時${mn>0?mn+'分':''}（${inRec.time} ～ ${outRec.time}）</div>`;
       }
     }
     rowsHtml = workHoursStr + recs.map(r => `

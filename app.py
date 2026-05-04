@@ -984,6 +984,24 @@ def api_punch_my_records():
               AND lr.start_date<=%s AND lr.end_date>=%s
         """, (sid, ml_mr, mf_mr)).fetchall()
 
+        # 當月排班（供前端計算時夾住工時）
+        sh_rows_mr = conn.execute("""
+            SELECT sa.shift_date, st.start_time, st.end_time
+            FROM shift_assignments sa
+            JOIN shift_types st ON st.id=sa.shift_type_id
+            WHERE sa.staff_id=%s AND TO_CHAR(sa.shift_date,'YYYY-MM')=%s
+        """, (sid, month)).fetchall()
+
+    shifts_by_date = {}
+    for sr in sh_rows_mr:
+        ds = sr['shift_date'].isoformat() if hasattr(sr['shift_date'], 'isoformat') else str(sr['shift_date'])
+        st_t = sr['start_time']; et_t = sr['end_time']
+        shifts_by_date[ds] = {
+            'start': str(st_t)[:5],
+            'end':   str(et_t)[:5],
+            'cross_midnight': et_t < st_t,
+        }
+
     PAY_LBL_MR = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
     # {date_str: [{leave_name, pay_label}]}
     leave_by_date = {}
@@ -1026,7 +1044,7 @@ def api_punch_my_records():
             'location_name': r['location_name'] or '',
             'is_manual':     bool(r['is_manual']),
         })
-    return jsonify({'month': month, 'records': result, 'leaves': leave_by_date})
+    return jsonify({'month': month, 'records': result, 'leaves': leave_by_date, 'shifts': shifts_by_date})
 
 # ── Admin: Staff CRUD ─────────────────────────────────────────────
 
@@ -1165,7 +1183,69 @@ def api_punch_records():
             WHERE {' AND '.join(conds)}
             ORDER BY pr.punched_at DESC LIMIT 500
         """, params).fetchall()
-    return jsonify([punch_record_row(r) for r in rows])
+
+        date_set = set()
+        staff_date_pairs = set()
+        for r in rows:
+            pa = r['punched_at']
+            if pa:
+                d = pa.astimezone(TW_TZ).date()
+                date_set.add(d)
+                staff_date_pairs.add((r['staff_id'], d))
+
+        holiday_map = {}
+        if date_set:
+            ph_rows = conn.execute(
+                "SELECT date, name FROM public_holidays WHERE date = ANY(%s)",
+                (list(date_set),)
+            ).fetchall()
+            for ph in ph_rows:
+                holiday_map[ph['date']] = ph['name']
+
+        leave_map = {}
+        if staff_date_pairs:
+            mn, mx = min(date_set), max(date_set)
+            PAY_LABEL_PR = {'full': '全薪', 'half': '半薪', 'none': '無薪'}
+            lv_rows = conn.execute("""
+                SELECT lr.staff_id, lr.start_date, lr.end_date,
+                       lr.start_half, lr.end_half,
+                       lt.name as leave_name, lt.pay_rate
+                FROM leave_requests lr
+                JOIN leave_types lt ON lt.id = lr.leave_type_id
+                WHERE lr.status = 'approved'
+                  AND lr.start_date <= %s AND lr.end_date >= %s
+            """, (mx, mn)).fetchall()
+            for lv in lv_rows:
+                cur = lv['start_date']
+                while cur <= lv['end_date']:
+                    if (lv['staff_id'], cur) in staff_date_pairs:
+                        is_half = (cur == lv['start_date'] and bool(lv['start_half'])) or \
+                                  (cur == lv['end_date'] and bool(lv['end_half']))
+                        key = (lv['staff_id'], cur)
+                        leave_map.setdefault(key, []).append({
+                            'leave_name': lv['leave_name'] + ('（半天）' if is_half else ''),
+                            'pay_label': PAY_LABEL_PR.get(lv['pay_rate'], lv['pay_rate'])
+                        })
+                    cur += _td(days=1)
+
+    result = []
+    for r in rows:
+        d = punch_record_row(r)
+        pa = r['punched_at']
+        if pa:
+            punch_date = pa.astimezone(TW_TZ).date()
+            if punch_date in holiday_map:
+                d['day_type'] = '國定假日'
+                d['holiday_name'] = holiday_map[punch_date]
+            elif punch_date.weekday() == 6:
+                d['day_type'] = '例假日'
+            elif punch_date.weekday() == 5:
+                d['day_type'] = '休息日'
+            else:
+                d['day_type'] = ''
+            d['leaves'] = leave_map.get((r['staff_id'], punch_date), [])
+        result.append(d)
+    return jsonify(result)
 
 @app.route('/api/punch/records', methods=['POST'])
 @require_module('punch')
@@ -1310,6 +1390,8 @@ def api_punch_summary():
               AND lr.start_date<=%s AND lr.end_date>=%s
         """, (ml_ps, mf_ps)).fetchall()
 
+        shift_map_ps = _build_shift_time_map(conn, month)
+
     PAY_LBL_PS = {1.0:'全薪', 0.5:'半薪', 0.0:'無薪'}
     from datetime import timedelta as _tdps
     # 建立 {(staff_id, date_str): [leave_name...]}
@@ -1347,21 +1429,20 @@ def api_punch_summary():
         clock_out = max(outs).isoformat() if outs else None
         punch_count = len(ins) + len(outs) + len(bucket['break_outs']) + len(bucket['break_ins'])
         duration_min = None
-        if clock_in and clock_out:
-            from datetime import datetime as _dt2
-            ci = _dt2.fromisoformat(clock_in)
-            co = _dt2.fromisoformat(clock_out)
-            gross_min = max(0, int((co - ci).total_seconds() / 60))
-            brk = 0.0
-            for bo in bucket['break_outs']:
-                matched = [bi for bi in bucket['break_ins'] if bi > bo]
-                if matched:
-                    brk += (min(matched) - bo).total_seconds() / 60
-            if gross_min >= 540:
-                brk = max(brk, 60)
-            elif gross_min >= 240:
-                brk = max(brk, 30)
-            duration_min = max(0, int(gross_min - brk))
+        if ins and outs:
+            ws, we = _clamp_to_shift(min(ins), max(outs), shift_map_ps, sid, ds)
+            if ws is not None:
+                gross_min = max(0, int((we - ws).total_seconds() / 60))
+                brk = 0.0
+                for bo in bucket['break_outs']:
+                    matched = [bi for bi in bucket['break_ins'] if bi > bo]
+                    if matched:
+                        brk += (min(matched) - bo).total_seconds() / 60
+                if gross_min >= 540:
+                    brk = max(brk, 60)
+                elif gross_min >= 240:
+                    brk = max(brk, 30)
+                duration_min = max(0, int(gross_min - brk))
         result.append({
             'staff_id':     sid,
             'staff_name':   staff_names.get(sid, ''),
@@ -1398,14 +1479,15 @@ def api_attendance_monthly_stats():
             ORDER BY pr.staff_id, pr.punched_at ASC
         """, (month, month)).fetchall()
 
-        # 班別指派（用於遲到判斷）
+        # 班別指派（用於遲到判斷 + 工時夾住）
         shift_rows = conn.execute("""
-            SELECT sa.staff_id, sa.date, st.start_time, st.end_time
+            SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
             FROM shift_assignments sa
             JOIN shift_types st ON st.id = sa.shift_type_id
-            WHERE TO_CHAR(sa.date,'YYYY-MM') = %s
+            WHERE TO_CHAR(sa.shift_date,'YYYY-MM') = %s
         """, (month,)).fetchall()
-        shift_map = {(r['staff_id'], str(r['date'])): r for r in shift_rows}
+        shift_map = {(r['staff_id'], str(r['shift_date'])): r for r in shift_rows}
+        shift_time_map = _build_shift_time_map(conn, month)
 
     staff_info = {}
     for r in rows:
@@ -1443,20 +1525,20 @@ def api_attendance_monthly_stats():
             s['days_worked'] += 1
 
         if has_in and has_out:
-            clock_in  = min(bucket['ins'])
-            clock_out = max(bucket['outs'])
-            diff = (clock_out - clock_in).total_seconds() / 60
-            if diff > 0:
-                brk = 0.0
-                for bo in bucket['break_outs']:
-                    matched = [bi for bi in bucket['break_ins'] if bi > bo]
-                    if matched:
-                        brk += (min(matched) - bo).total_seconds() / 60
-                if diff >= 540:
-                    brk = max(brk, 60)
-                elif diff >= 240:
-                    brk = max(brk, 30)
-                s['total_minutes'] += int(diff - brk)
+            ws, we = _clamp_to_shift(min(bucket['ins']), max(bucket['outs']), shift_time_map, sid, ds)
+            if ws is not None:
+                diff = (we - ws).total_seconds() / 60
+                if diff > 0:
+                    brk = 0.0
+                    for bo in bucket['break_outs']:
+                        matched = [bi for bi in bucket['break_ins'] if bi > bo]
+                        if matched:
+                            brk += (min(matched) - bo).total_seconds() / 60
+                    if diff >= 540:
+                        brk = max(brk, 60)
+                    elif diff >= 240:
+                        brk = max(brk, 30)
+                    s['total_minutes'] += int(diff - brk)
 
         # 缺打卡
         if has_in and not has_out:
@@ -4275,10 +4357,62 @@ def _calc_service_years(hire_date_str):
     except Exception:
         return 0.0
 
+def _build_shift_time_map(conn, month, staff_ids=None):
+    """
+    回傳排班時段對照表，用於將打卡時間夾住在排班區間內。
+    格式: {(staff_id, 'YYYY-MM-DD'): (shift_start_aware, shift_end_aware)}
+    """
+    from datetime import timedelta as _tdsh, datetime as _dtsh
+    where = "TO_CHAR(sa.shift_date,'YYYY-MM')=%s"
+    params = [month]
+    if staff_ids:
+        ph = ','.join(['%s'] * len(staff_ids))
+        where += f" AND sa.staff_id IN ({ph})"
+        params.extend(staff_ids)
+    sr_rows = conn.execute(f"""
+        SELECT sa.staff_id, sa.shift_date, st.start_time, st.end_time
+        FROM shift_assignments sa
+        JOIN shift_types st ON st.id=sa.shift_type_id
+        WHERE {where}
+    """, params).fetchall()
+    shift_map = {}
+    for sr in sr_rows:
+        sd = sr['shift_date']
+        if not hasattr(sd, 'year'):
+            from datetime import date as _dsh2
+            sd = _dsh2.fromisoformat(str(sd))
+        ds = sd.isoformat()
+        st_t, et_t = sr['start_time'], sr['end_time']
+        s_start = _dtsh(sd.year, sd.month, sd.day, st_t.hour, st_t.minute, tzinfo=TW_TZ)
+        if et_t < st_t:  # 跨日班次
+            nd = sd + _tdsh(days=1)
+            s_end = _dtsh(nd.year, nd.month, nd.day, et_t.hour, et_t.minute, tzinfo=TW_TZ)
+        else:
+            s_end = _dtsh(sd.year, sd.month, sd.day, et_t.hour, et_t.minute, tzinfo=TW_TZ)
+        shift_map[(sr['staff_id'], ds)] = (s_start, s_end)
+    return shift_map
+
+
+def _clamp_to_shift(actual_start, actual_end, shift_map, staff_id, date_str):
+    """
+    依排班表夾住實際打卡時間：早到不提前算、晚走不延後算。
+    無排班則原樣回傳。回傳 (clamped_start, clamped_end) 或 None 表示無效區間。
+    """
+    key = (staff_id, date_str)
+    if key not in shift_map:
+        return actual_start, actual_end
+    s_start, s_end = shift_map[key]
+    ws = max(actual_start, s_start)
+    we = min(actual_end, s_end)
+    if ws >= we:
+        return None, None  # 打卡區間完全在排班外
+    return ws, we
+
+
 def _calc_punch_hours(conn, staff_id, month):
     """
     從打卡記錄計算實際工時（時薪制用），支援跨日班次。
-    邏輯：每個工作日找最早 in + 最晚 out，扣除休息時間
+    邏輯：每個工作日找最早 in + 最晚 out，夾住在排班區間後扣除休息時間。
     回傳 (total_hours, work_days, details)
     """
     from datetime import timezone as _tzh, timedelta as _tdh
@@ -4295,7 +4429,8 @@ def _calc_punch_hours(conn, staff_id, month):
         ORDER BY punched_at ASC
     """, (staff_id, staff_id, month, month)).fetchall()
 
-    day_map = _shift_aware_day_map(rows, TW)
+    shift_map = _build_shift_time_map(conn, month, staff_ids=[staff_id])
+    day_map   = _shift_aware_day_map(rows, TW)
 
     total_hours = 0.0
     details     = []
@@ -4310,8 +4445,10 @@ def _calc_punch_hours(conn, staff_id, month):
         if not ins or not outs:
             continue
 
-        work_start = min(ins)
-        work_end   = max(outs)
+        work_start, work_end = _clamp_to_shift(min(ins), max(outs), shift_map, sid, ds)
+        if work_start is None:
+            continue
+
         gross_mins = (work_end - work_start).total_seconds() / 60
 
         # 扣除休息時間（勞基法第35條：>=4小時至少30分鐘）
@@ -5573,6 +5710,7 @@ def api_export_attendance_summary():
     with get_db() as conn:
         rows = conn.execute("""
             SELECT
+                pr.staff_id,
                 ps.employee_code,
                 ps.name,
                 ps.department,
@@ -5587,10 +5725,11 @@ def api_export_attendance_summary():
             FROM punch_records pr
             JOIN punch_staff ps ON ps.id = pr.staff_id
             WHERE TO_CHAR(pr.punched_at AT TIME ZONE 'Asia/Taipei','YYYY-MM')=%s
-            GROUP BY ps.employee_code, ps.name, ps.department, ps.role,
+            GROUP BY pr.staff_id, ps.employee_code, ps.name, ps.department, ps.role,
                      (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
             ORDER BY ps.name, (pr.punched_at AT TIME ZONE 'Asia/Taipei')::date
         """, (month,)).fetchall()
+        shift_map_xl = _build_shift_time_map(conn, month)
 
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -5618,9 +5757,12 @@ def api_export_attendance_summary():
             try:
                 ci = r['ci_ts'] if hasattr(r['ci_ts'], 'timestamp') else _dtx.fromisoformat(str(r['ci_ts']))
                 co = r['co_ts'] if hasattr(r['co_ts'], 'timestamp') else _dtx.fromisoformat(str(r['co_ts']))
-                gross_m = (co - ci).total_seconds() / 60
-                brk_m = 60.0 if gross_m >= 540 else (30.0 if gross_m >= 240 else 0.0)
-                dur_h = round(max(0, gross_m - brk_m) / 60, 2)
+                ds_xl = str(r['work_date'])
+                ci, co = _clamp_to_shift(ci, co, shift_map_xl, r['staff_id'], ds_xl)
+                if ci is not None:
+                    gross_m = (co - ci).total_seconds() / 60
+                    brk_m = 60.0 if gross_m >= 540 else (30.0 if gross_m >= 240 else 0.0)
+                    dur_h = round(max(0, gross_m - brk_m) / 60, 2)
             except Exception:
                 pass
         vals = [r['employee_code'] or '', r['name'], r['department'] or '', r['role'] or '',
@@ -10857,6 +10999,7 @@ def _line_query_monthly_records(staff, user_id, text):
                   AND to_char(punched_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM') = %s
                 ORDER BY punched_at ASC
             """, (staff['id'], month)).fetchall()
+            shift_map_ln = _build_shift_time_map(conn, month, staff_ids=[staff['id']])
     except Exception as e:
         _send_line_punch(user_id, f'查詢失敗：{e}')
         return
@@ -10894,27 +11037,31 @@ def _line_query_monthly_records(staff, user_id, text):
         has_manual = any(r['manual'] for r in recs)
 
         if clock_in and clock_out:
-            ci = _dtm.strptime(f'{ds} {clock_in}',  '%Y-%m-%d %H:%M')
-            co = _dtm.strptime(f'{ds} {clock_out}', '%Y-%m-%d %H:%M')
-            gross = max(0, int((co - ci).total_seconds() / 60))
-            # 勞基法第35條：>=4小時至少休息30分鐘
-            brk_mins = 0
-            bouts = [r['time'] for r in recs if r['type'] == 'break_out']
-            bins_ = [r['time'] for r in recs if r['type'] == 'break_in']
-            for bt in bouts:
-                matched = [x for x in bins_ if x > bt]
-                if matched:
-                    bh, bm_ = map(int, bt.split(':'))
-                    eh, em_ = map(int, min(matched).split(':'))
-                    brk_mins += (eh * 60 + em_) - (bh * 60 + bm_)
-            if gross >= 540:
-                brk_mins = max(brk_mins, 60)
-            elif gross >= 240:
-                brk_mins = max(brk_mins, 30)
-            mins = max(0, gross - brk_mins)
-            total_mins += mins
-            h, m = divmod(mins, 60)
-            dur = f'{h}h{m:02d}' if m else f'{h}h'
+            ci = _dtm.strptime(f'{ds} {clock_in}',  '%Y-%m-%d %H:%M').replace(tzinfo=TW)
+            co = _dtm.strptime(f'{ds} {clock_out}', '%Y-%m-%d %H:%M').replace(tzinfo=TW)
+            ci, co = _clamp_to_shift(ci, co, shift_map_ln, staff['id'], ds)
+            if ci is None:
+                dur = '--'
+            else:
+                gross = max(0, int((co - ci).total_seconds() / 60))
+                # 勞基法第35條：>=4小時至少休息30分鐘
+                brk_mins = 0
+                bouts = [r['time'] for r in recs if r['type'] == 'break_out']
+                bins_ = [r['time'] for r in recs if r['type'] == 'break_in']
+                for bt in bouts:
+                    matched = [x for x in bins_ if x > bt]
+                    if matched:
+                        bh, bm_ = map(int, bt.split(':'))
+                        eh, em_ = map(int, min(matched).split(':'))
+                        brk_mins += (eh * 60 + em_) - (bh * 60 + bm_)
+                if gross >= 540:
+                    brk_mins = max(brk_mins, 60)
+                elif gross >= 240:
+                    brk_mins = max(brk_mins, 30)
+                mins = max(0, gross - brk_mins)
+                total_mins += mins
+                h, m = divmod(mins, 60)
+                dur = f'{h}h{m:02d}' if m else f'{h}h'
         elif clock_in:
             dur = '⚠️缺下班'
             anomaly_days += 1
