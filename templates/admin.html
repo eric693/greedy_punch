@@ -3893,7 +3893,7 @@ async function loadPunchSummary() {
     // 假日 / 假別 badges
     let tagHtml = '';
     if (r.holiday_name) {
-      tagHtml += `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700;background:#fee2e2;color:var(--red);margin:1px 2px 1px 0">🎌 ${escHtml(r.holiday_name)}</span>`;
+      tagHtml += `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700;background:#fee2e2;color:var(--red);margin:1px 2px 1px 0">${escHtml(r.holiday_name)}</span>`;
     }
     (r.leaves||[]).forEach(lv => {
       const c = PAY_COLOR_SUM[lv.pay_label]||'var(--muted)';
@@ -5735,7 +5735,7 @@ async function openSalDetail(id) {
   if (data.leave_details && data.leave_details.length) {
     const PAY_COLOR = {'全薪':'var(--green)','半薪':'var(--accent)','無薪':'var(--red)'};
     leaveDetailBlock = `<div style="margin-top:10px">
-      <div style="font-size:11px;font-weight:700;color:#8b5cf6;margin-bottom:6px">📋 請假明細</div>
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;margin-bottom:6px">請假明細</div>
       <table style="width:100%;font-size:12px;border-collapse:collapse">
         <tr style="background:var(--bg)">
           <th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border)">假別</th>
@@ -5756,7 +5756,7 @@ async function openSalDetail(id) {
   let holidayBlock = '';
   if (data.holiday_dates && data.holiday_dates.length) {
     holidayBlock = `<div style="margin-top:10px">
-      <div style="font-size:11px;font-weight:700;color:var(--red);margin-bottom:6px">🎌 本月國定假日（${data.holiday_dates.length} 天）</div>
+      <div style="font-size:11px;font-weight:700;color:var(--red);margin-bottom:6px">本月國定假日（${data.holiday_dates.length} 天）</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px 12px">
         ${data.holiday_dates.map(h=>`<span style="font-size:11px;color:var(--muted)"><span style="font-family:'DM Mono',monospace">${h.date.slice(5)}</span> ${escHtml(h.name)}</span>`).join('')}
       </div>

@@ -1386,7 +1386,7 @@ function showDayDetail(ds) {
   const _lv = (window._attLeaves && window._attLeaves[ds]) || [];
   let bannerHtml = '';
   if (_hn) {
-    bannerHtml += `<div style="padding:8px 20px;background:#fff5f5;border-bottom:1px solid #fecaca;font-size:12px;font-weight:700;color:var(--red)">🎌 ${esc(_hn)}</div>`;
+    bannerHtml += `<div style="padding:8px 20px;background:#fff5f5;border-bottom:1px solid #fecaca;font-size:12px;font-weight:700;color:var(--red)">${esc(_hn)}</div>`;
   }
   if (_lv.length) {
     const lvTags = _lv.map(lv=>{
@@ -1394,7 +1394,7 @@ function showDayDetail(ds) {
       const bg=lv.pay_label==='全薪'?'#f0fdf4':lv.pay_label==='無薪'?'#fff5f5':'#f5f3ff';
       return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:20px;background:${bg};color:${c};font-weight:700;font-size:12px">${esc(lv.leave_name)} <span style="font-size:10px;opacity:.8">${esc(lv.pay_label)}</span></span>`;
     }).join(' ');
-    bannerHtml += `<div style="padding:8px 20px;background:#faf5ff;border-bottom:1px solid #e9d5ff;display:flex;flex-wrap:wrap;gap:6px;align-items:center">📋 ${lvTags}</div>`;
+    bannerHtml += `<div style="padding:8px 20px;background:#faf5ff;border-bottom:1px solid #e9d5ff;display:flex;flex-wrap:wrap;gap:6px;align-items:center">${lvTags}</div>`;
   }
 
   overlay.innerHTML = `
@@ -2191,7 +2191,7 @@ function renderPayslip(data, wrap) {
   ${data.leave_details && data.leave_details.length ? `
   <!-- 請假明細 -->
   <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden;margin-bottom:14px">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:#8b5cf6">📋 請假明細</div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:#8b5cf6">請假明細</div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead><tr style="background:var(--bg)">
@@ -2218,7 +2218,7 @@ function renderPayslip(data, wrap) {
   ${data.holiday_dates && data.holiday_dates.length ? `
   <!-- 國定假日 -->
   <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden;margin-bottom:14px">
-    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--red)">🎌 本月國定假日（${data.holiday_dates.length} 天）</div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--red)">本月國定假日（${data.holiday_dates.length} 天）</div>
     <div style="padding:10px 16px;display:flex;flex-wrap:wrap;gap:6px 16px">
       ${data.holiday_dates.map(h=>`<span style="font-size:12px;color:var(--muted)"><span style="font-family:'DM Mono',monospace;color:var(--red)">${h.date.slice(5)}</span> ${esc(h.name)}</span>`).join('')}
     </div>
