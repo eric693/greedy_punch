@@ -4136,8 +4136,9 @@ def init_salary_db():
         )""",
         "INSERT INTO salary_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
         "ALTER TABLE salary_records ADD COLUMN IF NOT EXISTS pay_date DATE",
-        # 勞退提撥6% 屬雇主強制提撥（不從員工薪資扣），預設停用，需手動指定才生效
+        # 勞退相關項目預設停用，需手動指定才生效（不同公司做法不同）
         "UPDATE salary_items SET active=FALSE WHERE name='勞退提撥6%' AND item_type='deduction'",
+        "UPDATE salary_items SET active=FALSE WHERE name='勞退6%' AND item_type='allowance'",
     ]
     for sql in migrations:
         try:
@@ -4154,7 +4155,7 @@ def init_salary_db():
         ('全勤獎金',    'allowance', '',                                0,    '#c8a96e', 3,  True),
         ('獎金',        'allowance', '',                                0,    '#8b5cf6', 4,  True),
         ('生日禮金',    'allowance', '',                                1000, '#e05c8a', 5,  True),
-        ('勞退6%',      'allowance', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 6, True),
+        ('勞退6%',      'allowance', 'base_salary*0.06+service_years*1000*0.06', 0, '#4a7bda', 6, False),
         ('病/事/假',    'deduction', '',                                0,    '#8892a4', 7,  True),
         ('勞保費',      'deduction', 'insured_salary*0.125*0.2',       0,    '#d64242', 8,  True),
         ('健保費',      'deduction', 'insured_salary*0.0517*0.3',      0,    '#e07b2a', 9,  True),
