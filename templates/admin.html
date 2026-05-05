@@ -121,7 +121,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full-width { grid-column: 1 / -1; }
 .form-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
-.form-input { padding: 10px 13px; border: 1.5px solid var(--border); border-radius: 7px; font-family: 'DM Mono', monospace; font-size: 14px; color: var(--text); background: var(--bg); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.form-input { padding: 10px 13px; border: 1.5px solid var(--border); border-radius: 7px; font-family: 'DM Mono', monospace; font-size: 14px; color: var(--text); background: var(--bg); outline: none; transition: border-color 0.15s, box-shadow 0.15s; width: 100%; }
 .form-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(74,123,218,0.1); background: var(--surface); }
 .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
 
@@ -2067,8 +2067,17 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">緯度</label><input class="form-input" id="glm-lat" placeholder="例：25.033964" type="number" step="0.000001"></div>
         <div><label class="form-label">經度</label><input class="form-input" id="glm-lng" placeholder="例：121.564468" type="number" step="0.000001"></div>
       </div>
-      <div style="margin-bottom:14px"><label class="form-label">允許範圍（公尺）</label><input class="form-input" id="glm-radius" type="number" min="10" max="5000" value="100" style="width:140px"><span style="font-size:12px;color:var(--muted);margin-left:10px">超出此距離即視為不在範圍內</span></div>
-      <div style="margin-bottom:6px"><label class="form-label">狀態</label><select class="form-input" id="glm-active" style="width:auto"><option value="1">啟用</option><option value="0">停用</option></select></div>
+      <div class="form-row">
+        <div>
+          <label class="form-label">允許範圍（公尺）</label>
+          <input class="form-input" id="glm-radius" type="number" min="10" max="5000" value="100">
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">超出此距離即視為不在範圍內</div>
+        </div>
+        <div>
+          <label class="form-label">狀態</label>
+          <select class="form-input" id="glm-active"><option value="1">啟用</option><option value="0">停用</option></select>
+        </div>
+      </div>
       <div style="margin-top:14px"><button class="btn btn-outline btn-sm" onclick="getLocGPS()">取得目前位置</button><span id="glm-gps-msg" style="font-size:12px;color:var(--muted);margin-left:10px"></span></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeLocModal()">取消</button><button class="btn btn-primary" onclick="saveLocation()">儲存</button></div>
@@ -2140,7 +2149,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">適用部門（選填）</label><input class="form-input" id="stm-dept" placeholder="例：外場、廚房"></div>
         <div><label class="form-label">排序</label><input class="form-input" type="number" id="stm-sort" value="0" min="0"></div>
       </div>
-      <div><label class="form-label">狀態</label><select class="form-input" id="stm-active" style="width:auto"><option value="1">啟用</option><option value="0">停用</option></select></div>
+      <div><label class="form-label">狀態</label><select class="form-input" id="stm-active"><option value="1">啟用</option><option value="0">停用</option></select></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeShiftTypeModal()">取消</button><button class="btn btn-primary" onclick="saveShiftType()">儲存</button></div>
   </div>
@@ -2332,7 +2341,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="lam-end-half"> <span class="form-label" style="margin:0">結束日半天</span></label></div>
       </div>
       <div id="lam-days-preview" style="font-size:13px;color:var(--accent);margin-bottom:12px;min-height:18px"></div>
-      <div style="margin-bottom:12px"><label class="form-label">狀態</label><select class="form-input" id="lam-status" style="width:auto"><option value="approved">直接核准</option><option value="pending">待審核</option></select></div>
+      <div style="margin-bottom:12px"><label class="form-label">狀態</label><select class="form-input" id="lam-status"><option value="approved">直接核准</option><option value="pending">待審核</option></select></div>
       <div><label class="form-label">原因/備註</label><input class="form-input" id="lam-reason" placeholder="選填" style="width:100%"></div>
     </div>
     <div class="modal-footer"><button class="btn btn-outline" onclick="closeLeaveAdminModal()">取消</button><button class="btn btn-primary" onclick="saveLeaveAdmin()">儲存</button></div>
@@ -2428,8 +2437,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">項目名稱 *</label><input class="form-input" id="sim-name" placeholder="例：職務加給"></div>
         <div><label class="form-label">類型</label><select class="form-input" id="sim-type"><option value="allowance">津貼（加項）</option><option value="deduction">扣除（減項）</option></select></div>
       </div>
-      <div style="margin-bottom:12px"><label class="form-label">計算公式（優先）</label><div style="display:flex;gap:6px">
-          <input class="form-input" id="sim-formula" placeholder="例：insured_salary*0.105*0.2　留空則用固定金額" style="flex:1">
+      <div style="margin-bottom:12px"><label class="form-label">計算公式（優先）</label><div style="display:flex;gap:6px;align-items:center">
+          <input class="form-input" id="sim-formula" placeholder="例：insured_salary*0.105*0.2　留空則用固定金額" style="flex:1;width:auto">
           <button class="btn btn-outline btn-sm" type="button" onclick="openFormulaEditor('sim-formula',document.getElementById('sim-formula').value)">編輯器</button>
         </div></div>
       <div class="form-row">
@@ -2494,9 +2503,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <div><label class="form-label">類別</label><select class="form-input" id="frm-cat"></select></div>
         <div><label class="form-label">金額 *</label><input class="form-input" type="number" id="frm-amount" min="0" step="1" placeholder="0"></div>
       </div>
-      <div class="form-row">
-        <div class="full-width"><label class="form-label">標題 *</label><input class="form-input" id="frm-title-input" placeholder="例：食材採購、客桌消費"></div>
-      </div>
+      <div style="margin-bottom:12px"><label class="form-label">標題 *</label><input class="form-input" id="frm-title-input" placeholder="例：食材採購、客桌消費"></div>
       <div class="form-row">
         <div><label class="form-label">廠商/店家</label><input class="form-input" id="frm-vendor" placeholder="選填"></div>
         <div><label class="form-label">發票/單據號碼</label><input class="form-input" id="frm-invoice" placeholder="選填"></div>
@@ -2592,15 +2599,15 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
           <input class="form-input" id="oem-vendor">
         </div>
       </div>
-      <div>
+      <div style="margin-bottom:12px">
         <label class="form-label">標題 *</label>
         <input class="form-input" id="oem-title">
       </div>
-      <div style="margin-top:10px">
+      <div style="margin-bottom:12px">
         <label class="form-label">發票 / 單據號碼</label>
         <input class="form-input" id="oem-invoice_no">
       </div>
-      <div style="margin-top:10px">
+      <div>
         <label class="form-label">備註</label>
         <input class="form-input" id="oem-note">
       </div>

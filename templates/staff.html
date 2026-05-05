@@ -216,14 +216,14 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           <div class="section-label" style="margin-bottom:12px">補打卡申請</div>
           <div style="margin-bottom:10px">
             <div class="fl">打卡類型</div>
-            <select class="fi" id="req-type" style="margin-bottom:8px">
+            <select class="fi" id="req-type" style="margin-bottom:0">
               <option value="in">上班打卡</option><option value="out">下班打卡</option>
               <option value="break_out">休息開始</option><option value="break_in">休息結束</option>
             </select>
           </div>
           <div style="margin-bottom:10px">
             <div class="fl">補打時間</div>
-            <input class="fi" type="datetime-local" id="req-time" style="margin-bottom:8px">
+            <input class="fi" type="datetime-local" id="req-time" style="margin-bottom:0">
           </div>
           <div style="margin-bottom:14px">
             <div class="fl">原因 *</div>
@@ -293,7 +293,7 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
       <div id="panel-overtime" class="tab-body" style="display:none">
         <div style="background:#fff;border-radius:10px;border:1.5px solid var(--border);padding:16px;margin-bottom:16px">
           <div class="section-label" style="margin-bottom:12px">新增加班申請</div>
-          <div style="margin-bottom:10px"><div class="fl">加班日期</div><input class="fi" type="date" id="ot-date" style="margin-bottom:8px"></div>
+          <div style="margin-bottom:10px"><div class="fl">加班日期</div><input class="fi" type="date" id="ot-date" style="margin-bottom:0"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <div><div class="fl">開始時間</div><input class="fi" type="time" id="ot-start" style="margin-bottom:0"></div>
             <div><div class="fl">結束時間</div><input class="fi" type="time" id="ot-end" style="margin-bottom:0"></div>
@@ -356,9 +356,9 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           </div>
           <!-- 小時模式（病假 / 事假） -->
           <div id="leave-hour-section" style="display:none">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-              <div><div class="fl">請假日期 *</div><input class="fi" type="date" id="leave-hour-date" style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
-              <div></div>
+            <div style="margin-bottom:10px">
+              <div class="fl">請假日期 *</div>
+              <input class="fi" type="date" id="leave-hour-date" style="margin-bottom:0" onchange="previewLeaveStaff()">
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
               <div><div class="fl">開始時間 *</div><input class="fi" type="time" id="leave-hour-start" value="09:00" style="margin-bottom:0" onchange="previewLeaveStaff()"></div>
@@ -443,11 +443,11 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
           <div style="padding:12px 16px">
             <div style="margin-bottom:10px">
               <div class="fl">費用日期</div>
-              <input class="fi" type="date" id="exp-date" style="margin-bottom:8px">
+              <input class="fi" type="date" id="exp-date" style="margin-bottom:0">
             </div>
             <div style="margin-bottom:10px">
               <div class="fl">費用類型</div>
-              <select class="fi" id="exp-category" style="margin-bottom:8px">
+              <select class="fi" id="exp-category" style="margin-bottom:0">
                 <option value="餐費">餐費</option>
                 <option value="交通費">交通費</option>
                 <option value="住宿費">住宿費</option>
@@ -457,11 +457,11 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
             </div>
             <div style="margin-bottom:10px">
               <div class="fl">金額（元）</div>
-              <input class="fi" type="number" id="exp-amount" placeholder="0" min="0" style="margin-bottom:8px">
+              <input class="fi" type="number" id="exp-amount" placeholder="0" min="0" style="margin-bottom:0">
             </div>
             <div style="margin-bottom:10px">
               <div class="fl">說明</div>
-              <input class="fi" type="text" id="exp-note" placeholder="費用說明（選填）" style="margin-bottom:8px">
+              <input class="fi" type="text" id="exp-note" placeholder="費用說明（選填）" style="margin-bottom:0">
             </div>
             <!-- 發票/收據上傳 -->
             <div style="margin-bottom:14px">
