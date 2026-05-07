@@ -1124,31 +1124,39 @@ def api_punch_staff_update(sid):
     birth_date     = b.get('birth_date') or None
     if not name or not username:
         return jsonify({'error': '姓名和帳號為必填'}), 400
-    with get_db() as conn:
-        conn.execute("SELECT id FROM punch_staff WHERE id=%s FOR UPDATE", (sid,))
-        if password:
-            if len(password) < 4:
-                return jsonify({'error': '密碼至少 4 個字元'}), 400
-            row = conn.execute("""
-                UPDATE punch_staff
-                SET name=%s,username=%s,password_hash=%s,password_plain=%s,role=%s,active=%s,employee_code=%s,
-                    department=%s,hire_date=%s,birth_date=%s,
-                    bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
-                WHERE id=%s RETURNING *
-            """, (name, username, _hash_pw(password), password, role, active, employee_code,
-                  department, hire_date, birth_date,
-                  bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
-        else:
-            row = conn.execute("""
-                UPDATE punch_staff
-                SET name=%s,username=%s,role=%s,active=%s,employee_code=%s,
-                    department=%s,hire_date=%s,birth_date=%s,
-                    bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
-                WHERE id=%s RETURNING *
-            """, (name, username, role, active, employee_code,
-                  department, hire_date, birth_date,
-                  bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
-    return jsonify(punch_staff_row(row)) if row else ('', 404)
+    if password and len(password) < 4:
+        return jsonify({'error': '密碼至少 4 個字元'}), 400
+    try:
+        with get_db() as conn:
+            conn.execute("SELECT id FROM punch_staff WHERE id=%s FOR UPDATE", (sid,))
+            if password:
+                row = conn.execute("""
+                    UPDATE punch_staff
+                    SET name=%s,username=%s,password_hash=%s,password_plain=%s,role=%s,active=%s,employee_code=%s,
+                        department=%s,hire_date=%s,birth_date=%s,
+                        bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
+                    WHERE id=%s RETURNING *
+                """, (name, username, _hash_pw(password), password, role, active, employee_code,
+                      department, hire_date, birth_date,
+                      bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
+            else:
+                row = conn.execute("""
+                    UPDATE punch_staff
+                    SET name=%s,username=%s,role=%s,active=%s,employee_code=%s,
+                        department=%s,hire_date=%s,birth_date=%s,
+                        bank_code=%s,bank_name=%s,bank_branch=%s,bank_account=%s,account_holder=%s
+                    WHERE id=%s RETURNING *
+                """, (name, username, role, active, employee_code,
+                      department, hire_date, birth_date,
+                      bank_code, bank_name, bank_branch, bank_account, account_holder, sid)).fetchone()
+        return jsonify(punch_staff_row(row)) if row else ('', 404)
+    except psycopg.errors.UniqueViolation:
+        return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
+    except Exception as e:
+        print(f"[punch_staff_update] error: {e}")
+        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            return jsonify({'error': '姓名或帳號已存在，請換一個'}), 409
+        return jsonify({'error': f'更新失敗：{str(e)}'}), 500
 
 @app.route('/api/punch/staff/<int:sid>', methods=['DELETE'])
 @login_required
