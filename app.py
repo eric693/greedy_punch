@@ -3209,8 +3209,11 @@ def _calc_ot_pay(staff_row, ot_hours, day_type='weekday'):
     if day_type in ('holiday', 'special'):
         pay = round(base_hourly * h * 2.0, 0)
     elif day_type == 'rest_day':
-        # 勞基法第24條第2項：休息日8小時以內以8小時計；前2小時1.33x，第3~8小時1.67x，超過8小時依第1項
-        billed = max(h, 8.0)
+        # 勞基法第24條第2項：≤4小時以4小時計，逾4至8小時以8小時計，逾8至12小時以12小時計
+        if h <= 4:    billed = 4.0
+        elif h <= 8:  billed = 8.0
+        elif h <= 12: billed = 12.0
+        else:         billed = h
         h1 = min(billed, 2.0); h2 = min(max(0.0, billed - 2.0), 6.0); h3 = max(0.0, billed - 8.0)
         pay = round(base_hourly * (h1 * ot_rate1 + h2 * ot_rate2 + h3 * ot_rate3), 0)
     else:
