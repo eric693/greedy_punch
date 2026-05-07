@@ -417,6 +417,29 @@ html,body{min-height:100%;background:var(--navy);font-family:"Noto Sans TC",sans
 
       <!-- 安全裝置 tab -->
       <div id="panel-biodev" class="tab-body" style="display:none">
+
+        <!-- 修改密碼 -->
+        <div style="background:#fff;border-radius:12px;border:1.5px solid var(--border);overflow:hidden;margin-bottom:20px">
+          <div style="padding:12px 16px;background:var(--navy);font-size:13px;font-weight:700;color:#fff">修改密碼</div>
+          <div style="padding:14px 16px">
+            <div style="margin-bottom:10px">
+              <div class="fl">舊密碼</div>
+              <input class="fi" type="password" id="cpw-old" placeholder="請輸入目前密碼" autocomplete="current-password" style="margin-bottom:0">
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="fl">新密碼</div>
+              <input class="fi" type="password" id="cpw-new" placeholder="至少 4 個字元" autocomplete="new-password" style="margin-bottom:0">
+            </div>
+            <div style="margin-bottom:14px">
+              <div class="fl">確認新密碼</div>
+              <input class="fi" type="password" id="cpw-new2" placeholder="再輸入一次" autocomplete="new-password" style="margin-bottom:0" onkeydown="if(event.key==='Enter')doChangePassword()">
+            </div>
+            <button class="login-btn" id="cpw-btn" onclick="doChangePassword()">確認修改</button>
+            <div id="cpw-msg" style="font-size:12px;text-align:center;margin-top:8px;min-height:16px"></div>
+          </div>
+        </div>
+
+        <!-- 生物辨識綁定 -->
         <div style="margin-bottom:16px">
           <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
             綁定裝置後，下次可直接使用 Face ID 或指紋登入，無需輸入密碼。生物資料僅存於您的裝置中，伺服器不儲存任何生物特徵。
@@ -565,6 +588,37 @@ async function doLogout(){
   me=null;gpsPos=null;
   if(gpsWatchId)navigator.geolocation.clearWatch(gpsWatchId);
   showLogin();
+}
+
+async function doChangePassword(){
+  const oldPw  = document.getElementById('cpw-old').value;
+  const newPw  = document.getElementById('cpw-new').value;
+  const newPw2 = document.getElementById('cpw-new2').value;
+  const msg    = document.getElementById('cpw-msg');
+  const btn    = document.getElementById('cpw-btn');
+  msg.style.color = 'var(--red)'; msg.textContent = '';
+  if (!oldPw)            { msg.textContent = '請輸入舊密碼'; return; }
+  if (!newPw)            { msg.textContent = '請輸入新密碼'; return; }
+  if (newPw.length < 4)  { msg.textContent = '新密碼至少 4 個字元'; return; }
+  if (newPw !== newPw2)  { msg.textContent = '兩次新密碼不一致'; return; }
+  btn.disabled = true; btn.textContent = '修改中...';
+  try {
+    const res  = await fetch('/api/punch/change-password', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ old_password: oldPw, new_password: newPw })
+    });
+    const data = await res.json();
+    if (!res.ok) { msg.textContent = data.error || '修改失敗'; return; }
+    msg.style.color = 'var(--green)';
+    msg.textContent = '密碼已成功修改';
+    document.getElementById('cpw-old').value  = '';
+    document.getElementById('cpw-new').value  = '';
+    document.getElementById('cpw-new2').value = '';
+  } catch(e) {
+    msg.textContent = '網路錯誤，請重試';
+  } finally {
+    btn.disabled = false; btn.textContent = '確認修改';
+  }
 }
 function showMain(){
   document.getElementById('screen-login').style.display='none';

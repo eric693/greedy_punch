@@ -789,6 +789,32 @@ def api_punch_me():
         return jsonify({'error': 'not logged in'}), 401
     return jsonify(dict(staff))
 
+@app.route('/api/punch/change-password', methods=['POST'])
+def api_punch_change_password():
+    sid = session.get('punch_staff_id')
+    if not sid:
+        return jsonify({'error': '請先登入'}), 401
+    b = request.get_json(force=True)
+    old_pw  = (b.get('old_password') or '').strip()
+    new_pw  = (b.get('new_password') or '').strip()
+    if not old_pw or not new_pw:
+        return jsonify({'error': '請填寫舊密碼與新密碼'}), 400
+    if len(new_pw) < 4:
+        return jsonify({'error': '新密碼至少 4 個字元'}), 400
+    with get_db() as conn:
+        staff = conn.execute(
+            "SELECT id, password_hash FROM punch_staff WHERE id=%s AND active=TRUE", (sid,)
+        ).fetchone()
+        if not staff:
+            return jsonify({'error': '帳號不存在'}), 404
+        if staff['password_hash'] != _hash_pw(old_pw):
+            return jsonify({'error': '舊密碼錯誤'}), 400
+        conn.execute(
+            "UPDATE punch_staff SET password_hash=%s, password_plain=%s WHERE id=%s",
+            (_hash_pw(new_pw), new_pw, sid)
+        )
+    return jsonify({'ok': True})
+
 # ── GPS Settings ──────────────────────────────────────────────────
 
 @app.route('/api/punch/settings', methods=['GET'])
