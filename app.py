@@ -415,6 +415,8 @@ def _run_annual_leave_sync():
 
 def _annual_leave_sync_loop():
     import time as _time_sync
+    # 等待模組完全載入後再執行
+    _time_sync.sleep(10)
     # 啟動時立即執行一次
     _run_annual_leave_sync()
     while True:
@@ -5025,11 +5027,14 @@ def api_salary_generate():
     b     = request.get_json(force=True)
     month = b.get('month', '').strip()
     if not month: return jsonify({'error': '請指定月份'}), 400
+    try:
+        year2, mo2 = map(int, month.split('-'))
+    except (ValueError, AttributeError):
+        return jsonify({'error': '月份格式錯誤，請使用 YYYY-MM'}), 400
 
     # 計算發薪日：薪資月份的下一個月的 pay_day
     cfg = _get_salary_config()
     pay_day = cfg['pay_day']
-    year2, mo2 = int(month.split('-')[0]), int(month.split('-')[1])
     pay_year, pay_mo = (year2, mo2 + 1) if mo2 < 12 else (year2 + 1, 1)
     effective_pay_day = min(pay_day, _cal2.monthrange(pay_year, pay_mo)[1])
     pay_date_str = _d2(pay_year, pay_mo, effective_pay_day).isoformat()
