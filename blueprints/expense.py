@@ -116,50 +116,6 @@ def api_expense_ocr():
     return jsonify(result)
 
 
-@bp.route('/api/leave/upload-cert', methods=['POST'])
-def api_leave_upload_cert():
-    sid = session.get('punch_staff_id')
-    if not sid: return jsonify({'error': '請先登入'}), 401
-    file = request.files.get('file')
-    if not file: return jsonify({'error': '請上傳圖片'}), 400
-    raw = file.read()
-    if len(raw) > 10 * 1024 * 1024:
-        return jsonify({'error': '檔案不可超過 10MB'}), 400
-    import base64 as _b64c
-    image_data = 'data:' + (file.content_type or 'image/jpeg') + ';base64,' + _b64c.b64encode(raw).decode()
-    try:
-        with get_db() as conn:
-            doc = conn.execute("""
-                INSERT INTO finance_documents (filename, doc_type, image_data, upload_date)
-                VALUES (%s, 'medical_cert', %s, CURRENT_DATE) RETURNING id
-            """, (file.filename, image_data)).fetchone()
-        return jsonify({'document_id': doc['id'], 'filename': file.filename})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@bp.route('/api/documents/<int:doc_id>/image', methods=['GET'])
-def api_document_image(doc_id):
-    if not (session.get('logged_in') or session.get('punch_staff_id')):
-        return jsonify({'error': 'unauthorized'}), 401
-    with get_db() as conn:
-        doc = conn.execute(
-            "SELECT image_data, filename FROM finance_documents WHERE id=%s", (doc_id,)
-        ).fetchone()
-    if not doc or not doc['image_data']:
-        return jsonify({'error': '找不到圖片'}), 404
-    from flask import Response
-    fname = (doc['filename'] or '').replace('"', '')
-    html = (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        f'<title>{fname}</title>'
-        '<style>body{margin:0;background:#111;display:flex;justify-content:center;align-items:flex-start}'
-        'img{max-width:100%;height:auto}</style></head>'
-        f'<body><img src="{doc["image_data"]}" alt="{fname}"></body></html>'
-    )
-    return Response(html, mimetype='text/html')
-
-
 # ── Admin endpoints ─────────────────────────────────────────────
 
 @bp.route('/api/expense/claims', methods=['GET'])
