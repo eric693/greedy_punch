@@ -690,11 +690,27 @@ function gpsErr(){
   else{setGpsBar('warn','未取得定位');}
   updateBtnState();
 }
+function getLocalIPs(){
+  return new Promise(resolve=>{
+    const ips=new Set();
+    const pc=new RTCPeerConnection({iceServers:[]});
+    pc.createDataChannel('');
+    pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(()=>resolve([]));
+    pc.onicecandidate=e=>{
+      if(!e.candidate){pc.close();resolve([...ips]);return;}
+      const m=/(\d+\.\d+\.\d+\.\d+)/.exec(e.candidate.candidate);
+      if(m&&!m[1].startsWith('127.'))ips.add(m[1]);
+    };
+    setTimeout(()=>{try{pc.close();}catch(e){}resolve([...ips]);},3000);
+  });
+}
 async function checkWifi(){
   try{
-    const r=await fetch('/api/punch/check-wifi');
+    const ips=await getLocalIPs();
+    const localIP=ips.find(ip=>ip.startsWith('192.168.')||ip.startsWith('10.')||ip.startsWith('172.'))||ips[0]||'';
+    const r=await fetch('/api/punch/check-wifi?local_ip='+encodeURIComponent(localIP));
     const d=await r.json();
-    wifiStatus=d;
+    wifiStatus={...d,localIP};
     if(d.matched){setWifiBar('ok','已連接：'+d.network_name);}
     else{
       const mode=(gpsSettings&&gpsSettings.punch_mode)||'none';
@@ -762,6 +778,7 @@ async function doPunch(type){
   punchLocked=true;setTimeout(()=>punchLocked=false,2000);
   const body={punch_type:type};
   if(gpsPos){body.lat=gpsPos.lat;body.lng=gpsPos.lng;}
+  if(wifiStatus&&wifiStatus.localIP)body.local_ip=wifiStatus.localIP;
   try{
     const r=await fetch('/api/punch/clock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();

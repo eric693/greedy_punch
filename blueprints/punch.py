@@ -206,9 +206,13 @@ def api_wifi_networks_delete(wid):
 def api_punch_check_wifi():
     with get_db() as conn:
         wifi_nets = conn.execute("SELECT * FROM punch_wifi_networks WHERE active=TRUE").fetchall()
-    client_ip = _get_client_ip(request)
-    matched, name = _check_wifi_ip(client_ip, [dict(r) for r in wifi_nets])
-    return jsonify({'matched': matched, 'network_name': name, 'client_ip': client_ip})
+    nets = [dict(r) for r in wifi_nets]
+    local_ip  = request.args.get('local_ip', '').strip()
+    server_ip = _get_client_ip(request)
+    matched, name = _check_wifi_ip(local_ip, nets) if local_ip else (False, None)
+    if not matched:
+        matched, name = _check_wifi_ip(server_ip, nets)
+    return jsonify({'matched': matched, 'network_name': name, 'local_ip': local_ip, 'server_ip': server_ip})
 
 
 @bp.route('/api/punch/my-ip', methods=['GET'])
@@ -311,8 +315,12 @@ def api_punch_clock():
     gps_ok = (lat is not None and lng is not None and matched_loc is not None and
               gps_distance is not None and gps_distance <= int(matched_loc['radius_m']))
 
-    client_ip = _get_client_ip(request)
-    wifi_ok, wifi_net_name = _check_wifi_ip(client_ip, [dict(r) for r in wifi_nets])
+    nets      = [dict(r) for r in wifi_nets]
+    local_ip  = b.get('local_ip', '').strip()
+    server_ip = _get_client_ip(request)
+    wifi_ok, wifi_net_name = _check_wifi_ip(local_ip, nets) if local_ip else (False, None)
+    if not wifi_ok:
+        wifi_ok, wifi_net_name = _check_wifi_ip(server_ip, nets)
 
     if punch_mode == 'gps':
         if lat is None or lng is None:
