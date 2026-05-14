@@ -133,6 +133,22 @@ def _init_core():
                 VALUES (1, FALSE)
                 ON CONFLICT (id) DO NOTHING
             """)
+            conn.execute("ALTER TABLE punch_config ADD COLUMN IF NOT EXISTS punch_mode TEXT DEFAULT 'none'")
+            # migrate existing gps_required=TRUE → punch_mode='gps'
+            conn.execute("""
+                UPDATE punch_config SET punch_mode='gps'
+                WHERE id=1 AND gps_required=TRUE AND punch_mode='none'
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS punch_wifi_networks (
+                    id         SERIAL PRIMARY KEY,
+                    name       TEXT NOT NULL DEFAULT 'WiFi 網路',
+                    ip_prefix  TEXT NOT NULL DEFAULT '',
+                    active     BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS line_punch_config (
                     id                   INT PRIMARY KEY DEFAULT 1,

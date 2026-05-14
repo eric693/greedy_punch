@@ -10,7 +10,7 @@ from config import TW_TZ
 from database import get_db, _hash_pw
 from helpers import (
     _gps_distance, _parse_tw_datetime,
-    punch_staff_row, punch_record_row, loc_row, punch_req_row,
+    punch_staff_row, punch_record_row, loc_row, wifi_network_row, punch_req_row,
     _notify_review_result,
 )
 
@@ -94,7 +94,26 @@ def api_punch_change_password():
     return jsonify({'ok': True})
 
 
-# ─── GPS Settings ──────────────────────────────────────────────────────────────
+# ─── Punch Verification Helpers ───────────────────────────────────────────────
+
+def _get_client_ip(req):
+    xff = req.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return req.remote_addr or ''
+
+
+def _check_wifi_ip(client_ip, wifi_networks):
+    for net in wifi_networks:
+        if not net.get('active'):
+            continue
+        prefix = (net.get('ip_prefix') or '').strip()
+        if prefix and client_ip.startswith(prefix):
+            return True, net['name']
+    return False, None
+
+
+# ─── Punch Settings ────────────────────────────────────────────────────────────
 
 @bp.route('/api/punch/settings', methods=['GET'])
 def api_punch_settings_get():
@@ -103,9 +122,16 @@ def api_punch_settings_get():
         locs = conn.execute(
             "SELECT * FROM punch_locations WHERE active=TRUE ORDER BY id"
         ).fetchall()
+        wifi = conn.execute(
+            "SELECT * FROM punch_wifi_networks WHERE active=TRUE ORDER BY id"
+        ).fetchall()
+    punch_mode = (cfg['punch_mode'] if cfg and cfg.get('punch_mode') else
+                  ('gps' if (cfg and cfg['gps_required']) else 'none'))
     return jsonify({
         'gps_required': cfg['gps_required'] if cfg else False,
-        'locations': [loc_row(r) for r in locs]
+        'punch_mode':   punch_mode,
+        'locations':    [loc_row(r) for r in locs],
+        'wifi_networks': [wifi_network_row(r) for r in wifi],
     })
 
 
@@ -113,13 +139,82 @@ def api_punch_settings_get():
 @login_required
 def api_punch_config_update():
     b = request.get_json(force=True)
-    gps_required = bool(b.get('gps_required', False))
+    punch_mode = b.get('punch_mode', 'none')
+    if punch_mode not in ('none', 'gps', 'wifi', 'any'):
+        return jsonify({'error': '無效的打卡模式'}), 400
+    gps_required = punch_mode in ('gps', 'any')
     with get_db() as conn:
         conn.execute(
-            "UPDATE punch_config SET gps_required=%s, updated_at=NOW() WHERE id=1",
-            (gps_required,)
+            "UPDATE punch_config SET gps_required=%s, punch_mode=%s, updated_at=NOW() WHERE id=1",
+            (gps_required, punch_mode)
         )
-    return jsonify({'gps_required': gps_required})
+    return jsonify({'punch_mode': punch_mode, 'gps_required': gps_required})
+
+
+# ─── WiFi Network CRUD ─────────────────────────────────────────────────────────
+
+@bp.route('/api/punch/wifi-networks', methods=['GET'])
+@login_required
+def api_wifi_networks_list():
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM punch_wifi_networks ORDER BY id").fetchall()
+    return jsonify([wifi_network_row(r) for r in rows])
+
+
+@bp.route('/api/punch/wifi-networks', methods=['POST'])
+@login_required
+def api_wifi_networks_create():
+    b = request.get_json(force=True)
+    name      = b.get('name', '').strip() or 'WiFi 網路'
+    ip_prefix = b.get('ip_prefix', '').strip()
+    if not ip_prefix:
+        return jsonify({'error': '請填入 IP 前綴'}), 400
+    with get_db() as conn:
+        row = conn.execute(
+            "INSERT INTO punch_wifi_networks (name, ip_prefix) VALUES (%s,%s) RETURNING *",
+            (name, ip_prefix)
+        ).fetchone()
+    return jsonify(wifi_network_row(row)), 201
+
+
+@bp.route('/api/punch/wifi-networks/<int:wid>', methods=['PUT'])
+@login_required
+def api_wifi_networks_update(wid):
+    b = request.get_json(force=True)
+    name      = b.get('name', '').strip() or 'WiFi 網路'
+    ip_prefix = b.get('ip_prefix', '').strip()
+    active    = bool(b.get('active', True))
+    if not ip_prefix:
+        return jsonify({'error': '請填入 IP 前綴'}), 400
+    with get_db() as conn:
+        row = conn.execute(
+            "UPDATE punch_wifi_networks SET name=%s,ip_prefix=%s,active=%s,updated_at=NOW() WHERE id=%s RETURNING *",
+            (name, ip_prefix, active, wid)
+        ).fetchone()
+    return jsonify(wifi_network_row(row)) if row else ('', 404)
+
+
+@bp.route('/api/punch/wifi-networks/<int:wid>', methods=['DELETE'])
+@login_required
+def api_wifi_networks_delete(wid):
+    with get_db() as conn:
+        conn.execute("DELETE FROM punch_wifi_networks WHERE id=%s", (wid,))
+    return jsonify({'deleted': wid})
+
+
+@bp.route('/api/punch/check-wifi', methods=['GET'])
+def api_punch_check_wifi():
+    with get_db() as conn:
+        wifi_nets = conn.execute("SELECT * FROM punch_wifi_networks WHERE active=TRUE").fetchall()
+    client_ip = _get_client_ip(request)
+    matched, name = _check_wifi_ip(client_ip, [dict(r) for r in wifi_nets])
+    return jsonify({'matched': matched, 'network_name': name, 'client_ip': client_ip})
+
+
+@bp.route('/api/punch/my-ip', methods=['GET'])
+@login_required
+def api_punch_my_ip():
+    return jsonify({'ip': _get_client_ip(request)})
 
 
 @bp.route('/api/punch/locations', methods=['GET'])
@@ -197,13 +292,15 @@ def api_punch_clock():
         ).fetchone()
         if not staff:
             return jsonify({'error': '員工不存在'}), 404
-        cfg  = conn.execute("SELECT * FROM punch_config WHERE id=1").fetchone()
-        locs = conn.execute("SELECT * FROM punch_locations WHERE active=TRUE").fetchall()
+        cfg       = conn.execute("SELECT * FROM punch_config WHERE id=1").fetchone()
+        locs      = conn.execute("SELECT * FROM punch_locations WHERE active=TRUE").fetchall()
+        wifi_nets = conn.execute("SELECT * FROM punch_wifi_networks WHERE active=TRUE").fetchall()
 
-    gps_required = cfg['gps_required'] if cfg else False
+    punch_mode = (cfg['punch_mode'] if cfg and cfg.get('punch_mode') else
+                  ('gps' if (cfg and cfg['gps_required']) else 'none'))
+
     gps_distance = None
     matched_loc  = None
-
     if lat is not None and lng is not None and locs:
         for loc in locs:
             d = _gps_distance(lat, lng, float(loc['lat']), float(loc['lng']))
@@ -211,17 +308,39 @@ def api_punch_clock():
                 gps_distance = d
                 matched_loc  = loc
 
-    if gps_required:
+    gps_ok = (lat is not None and lng is not None and matched_loc is not None and
+              gps_distance is not None and gps_distance <= int(matched_loc['radius_m']))
+
+    client_ip = _get_client_ip(request)
+    wifi_ok, wifi_net_name = _check_wifi_ip(client_ip, [dict(r) for r in wifi_nets])
+
+    if punch_mode == 'gps':
         if lat is None or lng is None:
             return jsonify({'error': '無法取得 GPS，請允許定位權限後重試'}), 403
         if not locs:
             return jsonify({'error': '管理員尚未設定任何打卡地點'}), 403
-        if gps_distance is None or gps_distance > int(matched_loc['radius_m']):
+        if not gps_ok:
             return jsonify({
                 'error': f'距離最近地點「{matched_loc["location_name"]}」{gps_distance} 公尺，超出允許範圍（{matched_loc["radius_m"]} 公尺）',
                 'distance': gps_distance,
                 'radius':   int(matched_loc['radius_m'])
             }), 403
+    elif punch_mode == 'wifi':
+        if not wifi_nets:
+            return jsonify({'error': '管理員尚未設定任何 WiFi 網路'}), 403
+        if not wifi_ok:
+            return jsonify({'error': '未偵測到公司 WiFi，請連接公司網路後重試'}), 403
+    elif punch_mode == 'any':
+        if not gps_ok and not wifi_ok:
+            if not locs and not wifi_nets:
+                return jsonify({'error': '管理員尚未設定任何打卡地點或 WiFi 網路'}), 403
+            if gps_distance is not None and matched_loc:
+                return jsonify({
+                    'error': f'GPS 超出範圍且未偵測到公司 WiFi，請在公司範圍或 WiFi 內打卡',
+                    'distance': gps_distance,
+                    'radius':   int(matched_loc['radius_m'])
+                }), 403
+            return jsonify({'error': '無法驗證位置，請在 GPS 範圍或公司 WiFi 下打卡'}), 403
 
     with get_db() as conn:
         recent = conn.execute("""
@@ -232,7 +351,12 @@ def api_punch_clock():
         if recent:
             return jsonify({'error': '1 分鐘內已打過卡'}), 429
 
-        matched_name = matched_loc['location_name'] if matched_loc else ''
+        if matched_loc:
+            matched_name = matched_loc['location_name']
+        elif wifi_net_name:
+            matched_name = wifi_net_name
+        else:
+            matched_name = ''
         row = conn.execute("""
             INSERT INTO punch_records
               (staff_id, punch_type, latitude, longitude, gps_distance, location_name)
