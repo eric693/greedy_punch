@@ -4358,28 +4358,38 @@ function getLocalIPs() {
     setTimeout(() => { try { pc.close(); } catch(e){} resolve([...ips]); }, 3000);
   });
 }
+function isPrivateIP(ip) {
+  return ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+}
+async function detectBestIP() {
+  // 先嘗試 WebRTC
+  const ips = await getLocalIPs();
+  const local = ips.find(isPrivateIP) || ips[0];
+  if (local) return { ip: local, method: 'WebRTC（本地 WiFi IP）' };
+  // fallback：伺服器端偵測
+  const { ok, data } = await api('/api/punch/my-ip', {}, true);
+  if (ok) return { ip: data.ip, method: '伺服器偵測（外部 IP）' };
+  return null;
+}
 async function showMyIp() {
   const el = document.getElementById('my-ip-result');
   el.textContent = '偵測中...';
-  const ips = await getLocalIPs();
-  const local = ips.find(ip => ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.'));
-  if (local) {
-    const parts = local.split('.');
-    el.textContent = `WiFi IP：${local}　→ 建議前綴：${parts.slice(0,3).join('.')}.`;
-  } else if (ips.length) {
-    el.textContent = `偵測到 IP：${ips.join(', ')}`;
+  const result = await detectBestIP();
+  if (result) {
+    const parts = result.ip.split('.');
+    const prefix = parts.length === 4 ? parts.slice(0,3).join('.')+'.' : '';
+    el.innerHTML = `<span style="color:var(--text)">${result.ip}</span> <span style="color:var(--muted);font-size:11px">${result.method}</span>${prefix ? `<br><span style="font-size:11px">建議前綴：<code>${prefix}</code></span>` : ''}`;
   } else {
-    el.textContent = '無法偵測（請確認瀏覽器允許 WebRTC）';
+    el.textContent = '偵測失敗，請手動查詢裝置 IP';
   }
 }
 async function fillMyIpPrefix() {
-  const ips = await getLocalIPs();
-  const local = ips.find(ip => ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) || ips[0];
-  if (!local) { showToast('無法偵測 WiFi IP', 'error'); return; }
-  const parts = local.split('.');
-  const prefix = parts.slice(0,3).join('.')+'.';
+  const result = await detectBestIP();
+  if (!result) { showToast('無法偵測 IP', 'error'); return; }
+  const parts = result.ip.split('.');
+  const prefix = parts.length === 4 ? parts.slice(0,3).join('.')+'.': result.ip;
   document.getElementById('wm-prefix').value = prefix;
-  showToast(`已填入 ${prefix}（完整 IP：${local}）`, 'success');
+  showToast(`已填入 ${prefix}（${result.method}：${result.ip}）`, 'success');
 }
 async function deleteWifiNetwork(id) {
   const net = wifiNetList.find(x => x.id === id);
