@@ -1015,7 +1015,8 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         <span class="filter-label">月份</span>
         <input class="filter-input" type="month" id="sal-month" onchange="loadSalaryRecords()">
         <button class="btn btn-outline btn-sm" onclick="previewSalary()">預覽計算明細</button>
-        <button class="btn btn-primary btn-sm" onclick="generateSalary()">確認產生薪資</button>
+        <button class="btn btn-primary btn-sm" onclick="generateSalary()">🧮 一鍵計算整月薪資</button>
+        <span style="font-size:11px;color:var(--muted)">（計算當月 1 號～月底全部出勤）</span>
         <button class="btn btn-outline btn-sm" id="sal-confirm-all-btn" onclick="confirmAllSalary()" style="display:none">全部確認</button>
         <button class="btn btn-outline btn-sm" id="sal-bulk-print-btn" onclick="bulkPrintPayslips()" style="display:none">列印全部薪資單</button>
         <button class="btn btn-outline btn-sm" onclick="exportSalaryCSV()">匯出薪資 Excel</button>
@@ -1056,7 +1057,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
             <input type="number" class="form-input" id="sal-pay-day" min="1" max="28" style="width:100%" placeholder="5">
           </div>
         </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:8px">※ 限 1–28 日，避免月底日期不存在的問題。排程每日 02:00 自動檢查，到達結算日時產生上月薪資草稿。</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">※ 結算日/發薪日限 1–28 日（避免月底日期不存在）。這只是「自動產生薪資的觸發日」，<strong>不影響</strong>薪資計算範圍——薪資一律計算當月 1 號～月底整月。排程每日 02:00 自動檢查，到達結算日時產生上月薪資草稿。</div>
         <button class="btn btn-primary" style="margin-top:12px" onclick="saveSalaryConfig()">儲存設定</button>
         <span id="sal-config-msg" style="font-size:12px;color:var(--green);margin-left:12px"></span>
       </div>
@@ -1945,7 +1946,7 @@ tbody td.date-cell { font-family: 'Noto Sans TC', sans-serif; font-weight: 500; 
         </div>
         <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">
           <button class="btn btn-outline" onclick="document.getElementById('salary-preview-modal').style.display='none'">關閉</button>
-          <button class="btn btn-primary" onclick="document.getElementById('salary-preview-modal').style.display='none';generateSalary()">確認產生薪資</button>
+          <button class="btn btn-primary" onclick="document.getElementById('salary-preview-modal').style.display='none';generateSalary()">🧮 一鍵計算整月薪資</button>
         </div>
       </div>
     </div>
@@ -5857,7 +5858,7 @@ async function loadSalaryRecords() {
 async function generateSalary() {
   const month = document.getElementById('sal-month').value;
   if (!month) { showToast('請選擇月份','error'); return; }
-  if (!confirm(`確定自動產生/更新 ${month} 的薪資記錄？`)) return;
+  if (!confirm(`確定計算/更新 ${month} 整月（1 號～月底）全部員工的薪資記錄？`)) return;
   const {ok,data} = await api('/api/salary/records/generate', apiJSON({month}));
   if (!ok) return;
   showToast(`已產生 ${data.generated} 筆薪資記錄`,'success'); await loadSalaryRecords();

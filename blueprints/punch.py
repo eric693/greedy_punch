@@ -588,7 +588,7 @@ def _calc_punch_hours(conn, staff_id, month):
             matched = [bi for bi in bucket['break_ins'] if bi > bo]
             if matched:
                 break_mins += (min(matched) - bo).total_seconds() / 60
-        if gross_mins >= 480:
+        if gross_mins >= 540:
             break_mins = max(break_mins, 60)
         elif gross_mins >= 240:
             break_mins = max(break_mins, 30)
@@ -1153,6 +1153,9 @@ def api_punch_req_submit():
         return jsonify({'error': '無效的打卡類型'}), 400
     if not requested_at:
         return jsonify({'error': '請選擇補打時間'}), 400
+    # 將前端傳入的本地時間（datetime-local，無時區）視為台灣時間（UTC+8），
+    # 避免存入 TIMESTAMPTZ 時被當成 UTC 而整整位移 8 小時。
+    requested_at = _parse_tw_datetime(requested_at)
     with get_db() as conn:
         row = conn.execute("""
             INSERT INTO punch_requests (staff_id, punch_type, requested_at, reason)
