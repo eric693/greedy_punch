@@ -337,7 +337,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 SELECT * FROM salary_items
                 WHERE active=TRUE AND id IN ({placeholders})
                   AND item_type='deduction'
-                  AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
+                  AND (formula LIKE '%%insured_salary%%' OR formula LIKE '%%base_salary%%')
                 ORDER BY sort_order, id
             """, staff_item_ids).fetchall()
         else:
@@ -345,7 +345,7 @@ def _auto_generate_salary(conn, staff, month, work_days=None):
                 SELECT * FROM salary_items
                 WHERE active=TRUE
                   AND item_type='deduction'
-                  AND (formula LIKE '%insured_salary%' OR formula LIKE '%base_salary%')
+                  AND (formula LIKE '%%insured_salary%%' OR formula LIKE '%%base_salary%%')
                 ORDER BY sort_order, id
             """).fetchall()
         for it in salary_items_rows:
@@ -660,6 +660,7 @@ def api_salary_records_list():
     if not month:
         from datetime import date as _d
         month = _d.today().strftime('%Y-%m')
+    result = []
     with get_db() as conn:
         rows = conn.execute("""
             SELECT sr.*, ps.name as staff_name, ps.role as staff_role,
@@ -671,17 +672,68 @@ def api_salary_records_list():
             WHERE sr.month=%s
             ORDER BY ps.name
         """, (month,)).fetchall()
-    result = []
-    for r in rows:
-        d = salary_record_row(r)
-        d['staff_name']    = r['staff_name']
-        d['staff_role']    = r['staff_role']
-        d['employee_code'] = r['employee_code'] or ''
-        d['department']    = r['department'] or ''
-        if not d.get('salary_type'): d['salary_type'] = r['staff_salary_type'] or 'monthly'
-        if not d.get('hourly_rate'): d['hourly_rate']  = float(r['staff_hourly_rate'] or 0)
-        result.append(d)
+        for r in rows:
+            d = salary_record_row(r)
+            d['staff_name']    = r['staff_name']
+            d['staff_role']    = r['staff_role']
+            d['employee_code'] = r['employee_code'] or ''
+            d['department']    = r['department'] or ''
+            if not d.get('salary_type'): d['salary_type'] = r['staff_salary_type'] or 'monthly'
+            if not d.get('hourly_rate'): d['hourly_rate']  = float(r['staff_hourly_rate'] or 0)
+            lv_details, holiday_dates = _leave_detail_for_month(conn, r['staff_id'], month)
+            d['leave_details'] = lv_details
+            d['holiday_dates'] = holiday_dates
+            result.append(d)
     return jsonify(result)
+
+
+@bp.route('/api/salary/records/preview', methods=['POST'])
+@require_module('salary')
+def api_salary_preview():
+    """預覽薪資計算結果（不儲存）"""
+    b     = request.get_json(force=True) or {}
+    month = b.get('month', '').strip()
+    if not month:
+        return jsonify({'error': '請指定月份'}), 400
+    result = []
+    with get_db() as conn:
+        staff_list = conn.execute(
+            "SELECT * FROM punch_staff WHERE active=TRUE ORDER BY name"
+        ).fetchall()
+        for staff in staff_list:
+            data = _auto_generate_salary(conn, dict(staff), month)
+            punch_days = conn.execute("""
+                SELECT COUNT(DISTINCT punched_at::date) AS n
+                FROM punch_records WHERE staff_id=%s
+                  AND to_char(punched_at,'YYYY-MM')=%s
+            """, (staff['id'], month)).fetchone()['n']
+            approved_ot = conn.execute("""
+                SELECT COUNT(*) AS n, COALESCE(SUM(ot_hours),0) AS hrs
+                FROM overtime_requests WHERE staff_id=%s
+                  AND status='approved'
+                  AND to_char(request_date,'YYYY-MM')=%s
+            """, (staff['id'], month)).fetchone()
+            result.append({
+                'staff_id':        data['staff_id'],
+                'staff_name':      staff['name'],
+                'department':      staff['department'],
+                'salary_type':     staff['salary_type'],
+                'punch_days':      punch_days,
+                'work_days':       float(data['work_days']),
+                'actual_days':     float(data['actual_days']),
+                'leave_days':      float(data['leave_days']),
+                'unpaid_days':     float(data['unpaid_days']),
+                'ot_count':        int(approved_ot['n']),
+                'ot_hours':        float(approved_ot['hrs']),
+                'ot_pay':          float(data['ot_pay']),
+                'base_salary':     float(data['base_salary']),
+                'allowance_total': float(data['allowance_total']),
+                'deduction_total': float(data['deduction_total']),
+                'net_pay':         float(data['net_pay']),
+                'leave_details':   data['leave_details'],
+                'holiday_dates':   data['holiday_dates'],
+            })
+    return jsonify({'ok': True, 'month': month, 'records': result})
 
 
 @bp.route('/api/salary/records/generate', methods=['POST'])

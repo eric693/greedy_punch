@@ -5802,6 +5802,20 @@ async function saveSalaryConfig() {
 }
 
 // ── 月薪計算 ─────────────────────────────────────────────────
+// 假別明細 + 國定假日標籤（讓月底結算一眼看到是哪種假，不用點明細）
+function salLeaveTagsHtml(r) {
+  let html = '';
+  if (r.leave_details && r.leave_details.length) {
+    html += '<div style="margin-top:2px;line-height:1.6">' + r.leave_details.map(lv =>
+      `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#f3f0ff;color:#6b5bd6;margin:1px 3px 1px 0">${escHtml(lv.leave_name)} ${lv.days}天 <span style="font-size:10px;opacity:.75">${escHtml(lv.pay_label||'')}</span></span>`
+    ).join('') + '</div>';
+  }
+  if (r.holiday_dates && r.holiday_dates.length) {
+    html += `<div style="margin-top:1px"><span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#fee2e2;color:var(--red);margin:1px 0">本月國假 ${r.holiday_dates.length} 天</span></div>`;
+  }
+  return html;
+}
+
 async function loadSalaryRecords() {
   const month = document.getElementById('sal-month').value; if (!month) return;
   const {ok,data} = await api(`/api/salary/records?month=${month}`,{},true);
@@ -5833,6 +5847,7 @@ async function loadSalaryRecords() {
       if (r.leave_days>0) anomalyBadge += `<span style="color:var(--accent);margin-left:4px">假${r.leave_days}天</span>`;
       anomalyBadge += '</div>';
     }
+    anomalyBadge += salLeaveTagsHtml(r);
     return `<tr${unaccounted>0?' style="background:rgba(214,66,66,0.04)"':''}>
       <td style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)">${escHtml(r.employee_code||'')}</td>
       <td style="font-weight:600">${escHtml(r.staff_name)}<span style="font-size:10px;color:var(--muted);margin-left:6px">${r.salary_type==='hourly'?'時薪':'月薪'}</span></td>
@@ -9743,12 +9758,13 @@ async function previewSalary() {
       const otLabel   = rec.ot_count > 0 ? `${rec.ot_count}筆 / ${rec.ot_hours}h` : '—';
       const leaveStyle = rec.unpaid_days > 0 ? 'color:var(--red)' : '';
       const anomaly   = rec.punch_days === 0 ? '<span style="color:var(--amber,#d97706);font-size:11px">⚠無打卡</span>' : '';
+      const leaveCell = (rec.leave_days > 0 ? `<div>${rec.leave_days}</div>` : '—') + salLeaveTagsHtml(rec);
       return `<tr>
         <td>${escHtml(rec.staff_name)} ${anomaly}</td>
         <td style="text-align:center;font-size:11px">${typeLabel}</td>
         <td style="text-align:center">${rec.work_days}</td>
         <td style="text-align:center;color:${rec.punch_days===0?'var(--amber,#d97706)':'inherit'}">${rec.punch_days}</td>
-        <td style="text-align:center;${leaveStyle}">${rec.leave_days > 0 ? rec.leave_days : '—'}</td>
+        <td style="text-align:center;${leaveStyle}">${leaveCell}</td>
         <td style="text-align:center">${otLabel}</td>
         <td style="text-align:right">NT$ ${Math.round(rec.ot_pay).toLocaleString()}</td>
         <td style="text-align:right">NT$ ${Math.round(rec.base_salary).toLocaleString()}</td>
